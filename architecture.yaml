@@ -1,0 +1,150 @@
+# The architecture of @md-code/code-diff.
+#
+# `interface/` is the contract: types only, no logic.
+# `geometry/` and `connections/` are pure MODEL: no React, no DOM, no
+#   colours — they turn lines, boxes and ids into plain data.
+# `surface/` and the renderers in `columns/` are the VIEW: they paint that data.
+# `index.ts` and `view.tsx` are the entries.
+#
+# Node names are the real folder/file names, so a file in the wrong place is
+# reported instead of silently accepted.
+
+codeRoles:
+  - slug: contract
+    name: contract
+    infer:
+      - kind: { own: { is: { in: [InterfaceDeclaration, TypeAliasDeclaration] } } }
+    actions:
+      declare: { where: [{ role: contract }] }
+      export: { where: [{ role: contract }] }
+      typeImport: { where: [{ role: contract }, { role: model }, { role: view }, { role: entry }] }
+
+  - slug: model
+    name: model
+    infer:
+      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction, VariableDeclaration] } } }
+    actions:
+      declare: { where: [{ role: model }] }
+      export: { where: [{ role: model }, { role: entry }] }
+      import: { where: [{ role: model }, { role: view }, { role: entry }] }
+      call: { where: [{ role: model }, { role: view }, { role: entry }] }
+      typeImport: { where: [{ role: model }, { role: view }, { role: entry }] }
+
+  - slug: view
+    name: view
+    infer:
+      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction, VariableDeclaration] } } }
+      - location: { path: { contains: ".tsx" } }
+    actions:
+      declare: { where: [{ role: view }] }
+      export: { where: [{ role: view }, { role: entry }] }
+      import: { where: [{ role: view }, { role: entry }] }
+      call: { where: [{ role: view }, { role: entry }] }
+      typeImport: { where: [{ role: model }, { role: view }, { role: entry }] }
+
+  - slug: entry
+    name: entry
+    infer:
+      - location: { path: { in: ["index.ts", "view.tsx"] } }
+    actions:
+      declare: { where: [{ role: entry }] }
+      export: { where: [{ role: entry }] }
+      import: { where: [{ role: entry }] }
+      call: { where: [{ role: entry }] }
+      typeImport: { where: [{ role: entry }] }
+
+nodes:
+  - slug: root
+    name: .
+    children: [interface, geometry, connections, columns, surface, index.ts, view.tsx, eslint.config.mjs, package.json, tsconfig.json, README.md, ARCHITECTURE.md, reports]
+
+  - slug: contract-folder
+    name: interface
+    role: contract
+    parent: root
+    children: ["*"]
+
+  - slug: geometry-folder
+    name: geometry
+    role: model
+    parent: root
+    children: ["*"]
+
+  - slug: connections-folder
+    name: connections
+    role: model
+    parent: root
+    children: ["*"]
+
+  # A column and its renderer live in the same folder; the `.tsx` one is the
+  # view, the `.ts` one is the model that describes it.
+  - slug: columns-folder
+    name: columns
+    role: [model, view]
+    parent: root
+    children: ["*"]
+
+  - slug: board-folder
+    name: surface
+    role: view
+    parent: root
+    children: ["*"]
+
+  - slug: index-entry
+    name: index.ts
+    role: entry
+    parent: root
+
+  - slug: view-entry
+    name: view.tsx
+    role: entry
+    parent: root
+
+invariants:
+  # ── MIGRATED FROM THE OTHER REPOSITORIES ──────────────────────────────────
+  - id: no-require
+    infer:
+      - imports: { any: { form: { is: "require" } } }
+
+  - id: no-classes
+    infer:
+      - kind: { own: { is: { equals: ClassDeclaration } } }
+
+  - id: no-empty-functions
+    infer:
+      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction] } } }
+      - calls: { length: { equals: 0 } }
+      - assignments: { length: { equals: 0 } }
+      - returns: { length: { equals: 0 } }
+
+  - id: no-useless-functions
+    infer:
+      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction] } } }
+      - returns: { length: { equals: 1 } }
+      - branches: { length: { equals: 0 } }
+      - locals: { length: { equals: 0 } }
+
+  - id: no-oversized-files
+    infer:
+      - lines: { length: { gt: 200 } }
+
+  - id: no-large-folders
+    where: [{ node: geometry-folder }, { node: connections-folder }, { node: board-folder }]
+    infer:
+      - files: { length: { gt: 5 } }
+
+  # ── REPRESENTATION, NOT DERIVATION ────────────────────────────────────────
+  #
+  # Evidence arrives as POSITIONS: `Mark { from, to }` character offsets, item
+  # ids, column ids. A renderer cuts text at the offsets it was given; it never
+  # goes looking for them. "Highlight by column number, not by searching for a
+  # string inside a substring" — a word found by `indexOf`/`match` is a word the
+  # decision maker never put there.
+  - id: no-string-search
+    infer:
+      - calls:
+          any:
+            action: { in: [indexOf, lastIndexOf, search, match, matchAll, lastMatch, split, replace, replaceAll] }
+    report:
+      message: "`{what}` locates text by searching it (`{violations}`)."
+      fix: "Pass the position instead: build `Mark { from, to }` / `Segment` / `Token` at the edge and paint at the given offset. code-diff represents positions, it does not derive them."

@@ -1,0 +1,48 @@
+{
+	"name": "@md-code/code-diff",
+	"version": "0.1.0",
+	"description": "Generic N-column code diff view: any column kinds, any-to-any links, dynamic one-to-many ribbons.",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./view": {
+			"types": "./dist/view.d.ts",
+			"default": "./dist/view.js"
+		},
+		"./interface": {
+			"types": "./interface/types.ts",
+			"default": "./interface/types.ts"
+		}
+	},
+	"files": [
+		"dist",
+		"interface",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"license": "MIT",
+	"peerDependencies": {
+		"react": ">=18",
+		"styled-components": ">=6"
+	},
+	"devDependencies": {
+		"@md-code/component-uniqueness": "file:../component-uniqueness",
+		"@md-code/entities-uniqueness": "file:../entities-uniqueness",
+		"@md-code/follow-architecture": "file:../follow-architecture",
+		"@md-code/utils-uniqueness": "file:../utils-uniqueness",
+		"@types/react": "^19.3.0",
+		"eslint": "^10.14.0",
+		"react": "^19",
+		"styled-components": "^6.6.0",
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.72.2"
+	}
+}
