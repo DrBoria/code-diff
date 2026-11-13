@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
 import styled, { ThemeProvider } from "styled-components";
-import type { Column, Connection, Fit, Renderer, Theme, ViewProps } from "../interface/types.js";
+import type { Column, Connection, Fit, LaneMark, Renderer, Theme, ViewProps } from "../interface/types.js";
 import { layoutColumn, layoutLookup, measureLayout, readScrollTops, type Layout } from "../geometry/measure.js";
 import { anchorOf } from "../columns/column.js";
 import { shapesOf, type ToneLookup } from "../geometry/ribbon.js";
@@ -338,12 +338,17 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 	// `const` on a line with four marked pieces is not the `call` above it, and the
 	// enclosing blocks mark the same characters — they do not own this one.
 	const hoverLine = hover === null ? null : lineOf(hover.column, hover.item);
-	const atPointer = (marks: readonly { line: string; from: number; to: number }[] | undefined): { from: number; to: number } | null => {
+	const atPointer = (marks: readonly LaneMark[] | undefined): LaneMark | null => {
 		if (marks === undefined || hover === null || hoverLine === null || hover.char === undefined) return null;
-		let best: { from: number; to: number } | null = null;
+		const at = hover;
+		const char: number = at.char ?? 0;
+		let best: LaneMark | null = null;
 		for (const mark of marks) {
-			if (String(mark.line) !== hoverLine || mark.from > (hover.char as number) || (hover.char as number) >= mark.to) continue;
-			if (best === null || mark.to - mark.from < best.to - best.from) best = { from: mark.from, to: mark.to };
+			// The range has to be on THIS row: same number in the other column is another word
+			// (`type: "dom-action"` on the left, `text: "Scrolled…"` on the right, same offsets).
+			if (mark.column !== at.column || String(mark.line) !== hoverLine) continue;
+			if (mark.from > char || char >= mark.to) continue;
+			if (best === null || mark.to - mark.from < best.to - best.from) best = mark;
 		}
 
 		return best;
@@ -373,10 +378,14 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 
 		return best === null ? [] : [best];
 	};
+	// A LANE THAT MARKS THIS ROW comes before one that merely names it: `limit` sits on a row
+	// the `returns` lane also joins, and the fewer-marks rule picked that empty lane while
+	// the callback-parameter lane — the one that actually marks `limit` — stayed dark.
+	const onRow = nearRow.filter((index) => (shown[index]?.marks ?? []).some((mark) => hover !== null && mark.column === hover.column && String(mark.line) === hoverLine));
 	const focused = laneHover !== null
 		? shown.map((_, index) => index).filter((index) => index === laneHover)
 		: piece === null
-			? narrowest(nearRow)
+			? narrowest(onRow.length > 0 ? onRow : nearRow)
 			: narrowest(owners);
 	const hotIndices = new Set(focused);
 	// WHERE the focused lanes are written: the exact ranges to underline, per column and
@@ -396,15 +405,18 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 		highlights.set(mark.column, rows);
 	};
 	for (const index of focused) {
-		const line = fromRow ? lineOf(hover.column, hover.item) : null;
+		const line = fromRow && hover !== null ? lineOf(hover.column, hover.item) : null;
 		for (const mark of shown[index]?.marks ?? []) {
-			if (line !== null && String(mark.line) !== line) continue;
+			if (line !== null && (hover === null || mark.column !== hover.column || String(mark.line) !== line)) continue;
 			// The exact piece under the pointer: the same range the lane was narrowed to.
 			if (piece !== null && (mark.from !== piece.from || mark.to !== piece.to)) continue;
 			// A character that sits on NO mark of the lane (`totalActions`, `cursor` in a
 			// property-assignment row) still belongs to this row's lane: the answer is every
 			// range the lane holds on this line, not silence.
 			addHighlight(mark);
+			// AND ITS DUPLICATE: the range this one was paired with on the other side. Hovering
+			// a name has to light the SAME name over there, not the row it sits in.
+			if (mark.twin !== undefined) addHighlight(mark.twin);
 		}
 	}
 	// A connection names item IDS, but the DOM carries ANCHORS. They differ for

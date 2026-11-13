@@ -217,6 +217,12 @@ export interface LaneMark {
 	readonly line: string;
 	readonly from: number;
 	readonly to: number;
+	/**
+	 * THE DUPLICATE of this very range: where the same name is written on the other side.
+	 * A lane joins rows, but a reader points at a WORD — and the answer to "what is this
+	 * duplicated with?" is one range over there, not the row it happens to sit in.
+	 */
+	readonly twin?: { readonly column: string; readonly line: string; readonly from: number; readonly to: number };
 }
 
 /** A colour key the owner supplied. The package never derives a colour. */
