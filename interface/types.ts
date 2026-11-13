@@ -364,6 +364,8 @@ export interface RendererProps<Data = never> {
 	 * searches the text and never decides which range matters.
 	 */
 	readonly highlight?: ReadonlyMap<string, readonly Mark[]> | undefined;
+	/** The resolved display knobs (row height, virtual-scroll thresholds, …). */
+	readonly options?: import("../config.js").ResolvedOptions;
 }
 
 /** One renderer per column `kind`. Any kind may be replaced by the caller. */
@@ -387,6 +389,12 @@ export interface Theme {
 	readonly paintInk?: string;
 	/** Stroke of the ribbons between columns. Defaults to the tone colour. */
 	readonly ribbon?: string;
+	/**
+	 * A text-shadow underlay painted behind glyphs so they read on a wash. The
+	 * default is a dark backdrop (for dark code surfaces); a light theme supplies
+	 * its own (or "none"). Keeps the package free of a baked-in dark assumption.
+	 */
+	readonly shadow?: string;
 }
 
 export interface ViewProps<Data = never> {
@@ -416,4 +424,78 @@ export interface ViewProps<Data = never> {
 	readonly tokenize?: (text: string, column: string) => readonly Token[];
 	/** Called when the reader acts on an item; forwarded to every renderer. */
 	readonly onAction?: (item: Item<Data>) => void;
+	/**
+	 * Display knobs the owner may override. Every field has a sensible default
+	 * inside the package, so omitting `options` keeps the standard look — but the
+	 * system is not closed: row height, the band gap, the diff limits and the
+	 * virtual-scroll thresholds are all the owner's to set.
+	 */
+	readonly options?: BoardOptions;
+	/**
+	 * The external controller: row/connection click callbacks and controlled focus.
+	 * code-diff performs no merge or dataset mutation itself — it reports interactions
+	 * here and a controller drives it back. Omit for the built-in comparison behaviour.
+	 */
+	readonly controller?: BoardController;
+}
+
+/**
+ * The configurable display parameters of the board. None is required: each falls
+ * back to the package default. They are gathered here so an owner tunes the view
+ * in one place instead of the values being buried as constants in the engine.
+ */
+export interface BoardOptions {
+	/** Height of one row in pixels (the list is uniform). Default 18. */
+	readonly rowHeight?: number;
+	/** Hairline gap above/below a band so neighbouring lanes never touch. Default 1. */
+	readonly bandGap?: number;
+	/** Equal lines kept at each end of a folded run. Default 3. */
+	readonly diffContext?: number;
+	/** Above this many tokens a changed line is not word-diffed. Default 400. */
+	readonly maxWordTokens?: number;
+	/** Lists up to this many rows are mounted whole (no windowing). Default 400. */
+	readonly fullMount?: number;
+	/** Viewports kept mounted above and below the visible window. Default 1. */
+	readonly overscan?: number;
+	/** An id in this many lanes is a hub; a hover does not walk through it. Default 3. */
+	readonly hubLanes?: number;
+	/** Max height of an uncapped pane (a CSS length). Default "74vh". */
+	readonly maxHeight?: string;
+	/**
+	 * Whether columns hide rows that take part in no connection (folding them into
+	 * "N hidden — click to show"). Default true (the comparison view). A git/merge
+	 * owner that shows every row sets this false board-wide, instead of per column.
+	 */
+	readonly foldUnconnected?: boolean;
+	/**
+	 * The label of a folded run, given the hidden count. Default mentions "lines";
+	 * a tree or graph column supplies its own ("N nodes hidden", …).
+	 */
+	readonly foldLabel?: (count: number) => string;
+}
+
+/** A reference to one row: a column id and an item id — the view's only address. */
+export interface RowRef {
+	readonly column: string;
+	readonly item: string;
+}
+
+/**
+ * The controller contract. code-diff is VIEW ONLY: it never decides a merge or
+ * mutates the dataset. Every interaction is reported out through these callbacks,
+ * and an external controller may drive the view back through the controlled props
+ * (`picked`, `reveal`). Omit them all and the view keeps its own built-in
+ * pick/reveal behaviour (the standalone comparison default).
+ */
+export interface BoardController {
+	/** A row was clicked (any column). The controller decides what it means. */
+	readonly onRowClick?: (ref: RowRef) => void;
+	/** A ribbon or its caption was clicked: the whole connection is the subject. */
+	readonly onConnectionClick?: (connection: Connection) => void;
+	/** The view's focused chain changed (null = cleared). For a controlled `picked`. */
+	readonly onPick?: (ref: RowRef | null) => void;
+	/** The reader asked to reveal hidden rows board-wide. */
+	readonly onReveal?: () => void;
+	/** Controlled focus: when set, the view shows exactly this chain. */
+	readonly picked?: RowRef | null;
 }

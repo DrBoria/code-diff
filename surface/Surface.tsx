@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
 import styled, { ThemeProvider } from "styled-components";
-import type { Column, Connection, Fit, LaneMark, Renderer, Theme, ViewProps } from "../interface/types.js";
+import type { Column, Fit, LaneMark, Renderer, Theme, ViewProps } from "../interface/types.js";
 import { layoutColumn, layoutLookup, measureLayout, readScrollTops, type Layout } from "../geometry/measure.js";
 import { anchorOf } from "../columns/column.js";
 import { shapesOf, type ToneLookup } from "../geometry/ribbon.js";
+import { resolveOptions } from "../config.js";
 import { useSyncedScroll } from "./scroll.js";
 
 /**
@@ -145,7 +146,9 @@ interface LaneNode {
 	readonly caption: SVGTextElement;
 }
 
-export const Surface = <Data,>({ columns, connections = [], corridors = [], sync = [], reveal = false, tones = {}, renderers = {}, render, theme, onAction, fit, tokenize }: ViewProps<Data>): ReactElement => {
+export const Surface = <Data,>({ columns, connections = [], corridors = [], sync = [], reveal = false, tones = {}, renderers = {}, render, theme, onAction, fit, tokenize, options, controller }: ViewProps<Data>): ReactElement => {
+	// The display knobs, resolved once: the owner's overrides on top of the defaults.
+	const config = useMemo(() => resolveOptions(options), [options]);
 	// THE LAYOUT, NOT THE SCROLL: measured boxes with the scroll taken out, so a
 	// scroll only repaints. Re-measured when the content or the size changes.
 	const [layout, setLayout] = useState<Layout | null>(null);
@@ -158,8 +161,10 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 	// the highlight is the occurrence that lane stands for.
 	const [laneHover, setLaneHover] = useState<number | null>(null);
 	// The connection the reader clicked: the board narrows to its chain, and the
-	// "N lines hidden — click to show" button brings the rest back.
-	const [picked, setPicked] = useState<{ column: string; item: string } | null>(null);
+	// "N lines hidden — click to show" button brings the rest back. A controller may
+	// own this state (`controller.picked`); otherwise the view keeps it internally.
+	const [internalPicked, setPicked] = useState<{ column: string; item: string } | null>(null);
+	const picked = controller?.picked !== undefined ? controller.picked : internalPicked;
 	const root = useRef<HTMLDivElement | null>(null);
 	const layer = useRef<SVGSVGElement | null>(null);
 	// Lane nodes, keyed by the CONNECTION's own index: a lane keeps its node for the
@@ -198,12 +203,12 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 	const measure = useCallback((): void => {
 		const element = root.current;
 		if (element === null) return;
-		const next = measureLayout(element);
+		const next = measureLayout(element, config.bandGap);
 		const key = keyOf(next);
 		if (key === lastLayout.current) return;
 		lastLayout.current = key;
 		setLayout(next);
-	}, []);
+	}, [config.bandGap]);
 
 	useLayoutEffect(() => {
 		const element = root.current;
@@ -265,7 +270,7 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 			}
 		}
 	}
-	const HUB_LANES = 3;
+	const HUB_LANES = config.hubLanes;
 
 	// The CHAIN of one id: the lanes it belongs to, and — from a lane — only ids that are
 	// not hubs. A hub stands for many rows, so passing through it would highlight rows
@@ -632,11 +637,15 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 	};
 
 	// A pick keeps exactly what the pointer showed. Clicking the same row again (or
-	// the fold button) lets everything back.
+	// the fold button) lets everything back. The view reports the change out; when a
+	// controller owns `picked`, it drives the state back through the prop.
 	const pick = (next: { column: string; item: string }): void => {
 		if (chainOf(next).size === 0) return;
+		const cleared = picked?.column === next.column && picked?.item === next.item;
+		const value = cleared ? null : next;
 		setRevealed(false);
-		setPicked((current) => (current?.column === next.column && current?.item === next.item ? null : next));
+		setPicked(value);
+		controller?.onPick?.(value);
 	};
 
 	const onClick = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -646,7 +655,11 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 		const stamp = cell instanceof HTMLElement ? cell.dataset.column : undefined;
 		if (stamp === undefined) return;
 		const row = target.closest("[data-item]");
-		if (row instanceof HTMLElement && row.dataset.item !== undefined) pick({ column: stamp, item: row.dataset.item });
+		if (row instanceof HTMLElement && row.dataset.item !== undefined) {
+			const ref = { column: stamp, item: row.dataset.item };
+			controller?.onRowClick?.(ref);
+			pick(ref);
+		}
 	};
 
 	// A LANE's own handlers, delegated on the layer. The pointer names a LANE (its index),
@@ -658,13 +671,6 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 		const index = Number(lane.getAttribute("data-index"));
 
 		return Number.isFinite(index) && shown[index] !== undefined ? index : null;
-	};
-
-	const laneEndOf = (element: Element): Connection["ends"][number] | undefined => {
-		const index = laneIndexOf(element);
-		if (index === null) return undefined;
-
-		return shown[index]?.ends.find((end) => end.items.length > 0);
 	};
 
 	const onLayerOver = (event: ReactPointerEvent<SVGSVGElement>): void => {
@@ -682,10 +688,16 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 	};
 
 	const onClickLayer = (event: ReactPointerEvent<SVGSVGElement>): void => {
-		const end = laneEndOf(event.target as Element);
-		if (end === undefined) return;
+		const index = laneIndexOf(event.target as Element);
+		if (index === null) return;
+		const connection = shown[index];
+		if (connection === undefined) return;
 		event.stopPropagation();
-		pick({ column: end.column, item: String(end.items[0]) });
+		// The whole connection is the subject of a ribbon click; the controller decides
+		// what to do with it (apply a hunk, open a pair, …). The view also focuses it.
+		controller?.onConnectionClick?.(connection);
+		const end = connection.ends.find((entry) => entry.items.length > 0);
+		if (end !== undefined) pick({ column: end.column, item: String(end.items[0]) });
 	};
 
 	return (
@@ -710,6 +722,9 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 					if (!Render) throw new Error(`code-diff: no renderer for kind "${column.kind}"`);
 					const corridor = corridors[index];
 					const linkSet = connected.get(column.id);
+					// Folding is the comparison default; a column may opt out (`fold: false`),
+					// and the board may turn it off for everyone (`options.foldUnconnected`).
+					const foldHere = column.fold ?? config.foldUnconnected;
 
 					return (
 						<Group key={column.id}>
@@ -718,16 +733,19 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 									column={column}
 									{...(render === undefined ? {} : { render })}
 									{...(onAction === undefined ? {} : { onAction })}
-									{...(linkSet === undefined || column.fold === false ? {} : { connected: linkSet })}
+									{...(linkSet === undefined || foldHere === false ? {} : { connected: linkSet })}
 									expanded={revealed}
 									onLayout={measure}
 									{...(highlights.has(column.id) ? { highlight: highlights.get(column.id) } : {})}
 									onReveal={() => {
 										setPicked(null);
 										setRevealed(true);
+										controller?.onPick?.(null);
+										controller?.onReveal?.();
 									}}
 									{...(fit === undefined ? {} : { fit })}
 									{...(tokenize === undefined ? {} : { tokenize })}
+									options={config}
 								/>
 							</Cell>
 							{corridor === undefined ? null : <Corridor data-corridor={index} />}

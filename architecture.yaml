@@ -56,7 +56,7 @@ codeRoles:
 nodes:
   - slug: root
     name: .
-    children: [interface, geometry, connections, columns, surface, index.ts, view.tsx, eslint.config.mjs, package.json, tsconfig.json, README.md, ARCHITECTURE.md, reports]
+    children: [interface, geometry, connections, marks, rows, columns, surface, tests, config.ts, constants.ts, vitest.config.ts, index.ts, view.tsx, eslint.config.mjs, package.json, tsconfig.json, README.md, ARCHITECTURE.md, reports]
 
   - slug: contract-folder
     name: interface
@@ -73,6 +73,45 @@ nodes:
   - slug: connections-folder
     name: connections
     role: model
+    parent: root
+    children: ["*"]
+
+  # `marks/` is a MODEL-side helper for the producer: it turns semantic "this name
+  # matches that name" links into character positions. It is the ONE place allowed
+  # to locate text, because it runs at the edge where positions are derived — not
+  # in a renderer. The view still only paints offsets it was given.
+  - slug: marks-folder
+    name: marks
+    role: model
+    parent: root
+    children: ["*"]
+
+  - slug: rows-folder
+    name: rows
+    role: model
+    parent: root
+    children: ["*"]
+
+  - slug: config-file
+    name: config.ts
+    role: model
+    parent: root
+
+  - slug: constants-file
+    name: constants.ts
+    role: model
+    parent: root
+
+  - slug: vitest-config
+    name: vitest.config.ts
+    role: entry
+    parent: root
+
+  # Tests exercise the public API; they are not part of the shipped view/model
+  # and are exempt from the representation and size invariants.
+  - slug: tests-folder
+    name: tests
+    role: [model, view, entry]
     parent: root
     children: ["*"]
 
@@ -140,7 +179,12 @@ invariants:
   # goes looking for them. "Highlight by column number, not by searching for a
   # string inside a substring" — a word found by `indexOf`/`match` is a word the
   # decision maker never put there.
+  #
+  # The rule binds the VIEW (surface/ and the columns renderers). `marks/` is the
+  # model-side helper that DERIVES those positions for the producer at the edge,
+  # so it is exempt: it is the place positions come from, not a renderer.
   - id: no-string-search
+    where: [{ node: board-folder }, { node: columns-folder }]
     infer:
       - calls:
           any:

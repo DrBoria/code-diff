@@ -54,23 +54,25 @@ const boxesOfEnd = (end: ConnectionEnd, lookup: AnchorLookup): Array<{ id: strin
 	end.items
 		.map((id) => ({ id: String(id), box: lookup(end.column, String(id)) }))
 		.filter((entry): entry is { id: string; box: Box } => entry.box !== null)
-		.sort((a, b) => Number(a.id) - Number(b.id) || a.box.top - b.box.top);
+		.sort((a, b) => a.box.top - b.box.top || a.box.left - b.box.left);
 
 /**
- * GATHER ids into blocks: ids whose numbers follow each other are one block (a
- * statement, `property names`), a gap starts the next one. This is the only place
- * that decides what "one block" means, and it looks at IDs only — never at rows.
+ * GATHER ids into blocks by VISUAL ADJACENCY: boxes that touch vertically are one
+ * block (a statement, a run of property names), a gap starts the next one. This
+ * works for ANY id — numeric line numbers, tree-node paths, git hunk ids — because
+ * it looks at the measured position, never at the id's value. Two boxes are
+ * adjacent when the next starts within a hairline of where the previous ended.
  */
+const ADJACENT = 2;
+
+const touches = (last: Box, next: Box): boolean => next.top <= last.bottom + ADJACENT;
+
 const blocksOf = (entries: ReadonlyArray<{ id: string; box: Box }>): Box[] => {
 	const blocks: Array<{ top: number; bottom: number; left: number; right: number }> = [];
-	let previous: number | null = null;
 
 	for (const entry of entries) {
-		const id = Number(entry.id);
-		const contiguous = previous !== null && Number.isFinite(id) && id - previous === 1;
 		const last = blocks[blocks.length - 1];
-
-		if (contiguous && last !== undefined) {
+		if (last !== undefined && touches(last, entry.box)) {
 			last.top = Math.min(last.top, entry.box.top);
 			last.bottom = Math.max(last.bottom, entry.box.bottom);
 			last.left = Math.min(last.left, entry.box.left);
@@ -78,8 +80,6 @@ const blocksOf = (entries: ReadonlyArray<{ id: string; box: Box }>): Box[] => {
 		} else {
 			blocks.push({ ...entry.box });
 		}
-
-		previous = Number.isFinite(id) ? id : null;
 	}
 
 	return blocks;
@@ -101,15 +101,12 @@ const endBox = (boxes: readonly Box[]): Box => ({
  */
 const blocksByTone = (entries: ReadonlyArray<{ id: string; box: Box }>, column: string, toneOf?: ToneLookup): Array<Box & { tone: string | null }> => {
 	const blocks: Array<{ top: number; bottom: number; left: number; right: number; tone: string | null }> = [];
-	let previous: number | null = null;
 
 	for (const entry of entries) {
-		const id = Number(entry.id);
 		const tone = toneOf?.(column, entry.id) ?? null;
-		const contiguous = previous !== null && Number.isFinite(id) && id - previous === 1;
 		const last = blocks[blocks.length - 1];
 
-		if (contiguous && last !== undefined && last.tone === tone) {
+		if (last !== undefined && last.tone === tone && touches(last, entry.box)) {
 			last.top = Math.min(last.top, entry.box.top);
 			last.bottom = Math.max(last.bottom, entry.box.bottom);
 			last.left = Math.min(last.left, entry.box.left);
@@ -117,8 +114,6 @@ const blocksByTone = (entries: ReadonlyArray<{ id: string; box: Box }>, column: 
 		} else {
 			blocks.push({ ...entry.box, tone });
 		}
-
-		previous = Number.isFinite(id) ? id : null;
 	}
 
 	return blocks;

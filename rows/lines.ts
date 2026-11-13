@@ -194,7 +194,7 @@ const foldEqualRuns = (rows: readonly LineRow[], context: number): LineRow[] => 
 
 const countRows = (rows: readonly LineRow[]): Record<RowType, number> => {
 	const counts = { [ROW.Equal]: 0, [ROW.Change]: 0, [ROW.Add]: 0, [ROW.Remove]: 0, [ROW.Fold]: 0 } as Record<RowType, number>;
-	for (const row of rows) counts[row.type] += 1;
+	for (const row of rows) counts[row.type] = (counts[row.type] ?? 0) + 1;
 
 	return counts;
 };

@@ -17,11 +17,11 @@ import styled from "styled-components";
  * reads a pane's `scrollTop` to place a lane: the scroller must not move.
  */
 
-const Scroller = styled.div<{ $rubber: boolean; $cap: boolean }>`
+const Scroller = styled.div<{ $rubber: boolean; $cap: boolean; $maxHeight: string }>`
 	overflow-x: ${(p) => (p.$rubber ? "hidden" : "auto")};
 	overflow-y: auto;
 	/* Capped: the board's height is the ceiling (the column does not set it). */
-	max-height: ${(p) => (p.$cap ? "100%" : "74vh")};
+	max-height: ${(p) => (p.$cap ? "100%" : p.$maxHeight)};
 	scrollbar-width: none;
 	&::-webkit-scrollbar { width: 0; height: 0; display: none; }
 `;
@@ -50,6 +50,10 @@ export interface VirtualProps {
 	readonly renderRow: (index: number) => ReactNode;
 	/** The window moved: a different set of rows is mounted now. */
 	readonly onWindow?: (() => void) | undefined;
+	/** Lists up to this many rows are mounted whole (no windowing). Default 400. */
+	readonly fullMount?: number;
+	/** Max height of an uncapped pane (a CSS length). Default "74vh". */
+	readonly maxHeight?: string;
 }
 
 /**
@@ -65,7 +69,7 @@ interface Range {
 	readonly end: number;
 }
 
-export const Virtual = ({ count, rowHeight, overscan = 1, rubber = false, cap = false, renderRow, onWindow }: VirtualProps): ReactElement => {
+export const Virtual = ({ count, rowHeight, overscan = 1, rubber = false, cap = false, renderRow, onWindow, fullMount = FULL_MOUNT, maxHeight = "74vh" }: VirtualProps): ReactElement => {
 	const scroller = useRef<HTMLDivElement | null>(null);
 	// A first guess so the first paint is not empty; the layout effect corrects it
 	// before the browser shows anything.
@@ -76,7 +80,7 @@ export const Virtual = ({ count, rowHeight, overscan = 1, rubber = false, cap = 
 	useLayoutEffect(() => {
 		const element = scroller.current;
 		if (element === null) return undefined;
-		if (count <= FULL_MOUNT) {
+		if (count <= fullMount) {
 			setRange((current) => (current.start === 0 && current.end === count ? current : { start: 0, end: count }));
 
 			return undefined;
@@ -108,13 +112,13 @@ export const Virtual = ({ count, rowHeight, overscan = 1, rubber = false, cap = 
 			observer.disconnect();
 			element.removeEventListener("scroll", update);
 		};
-	}, [count, rowHeight, overscan, onWindow]);
+	}, [count, rowHeight, overscan, onWindow, fullMount]);
 
 	const rows: ReactNode[] = [];
 	for (let index = range.start; index < range.end; index += 1) rows.push(renderRow(index));
 
 	return (
-		<Scroller ref={scroller} $rubber={rubber} $cap={cap}>
+		<Scroller ref={scroller} $rubber={rubber} $cap={cap} $maxHeight={maxHeight}>
 			<Content $rubber={rubber}>
 				<Spacer style={{ height: range.start * rowHeight }} />
 				{rows}

@@ -44,7 +44,7 @@ const Plate = styled.span<{ $mirrored: boolean }>`
 	border-left: ${(p) => (p.$mirrored ? `1px solid ${p.theme.edge}` : "0")};
 `;
 
-const Row = styled.div<{ $rubber: boolean }>`
+const Row = styled.div<{ $rubber: boolean; $rowHeight: number }>`
 	display: flex;
 	width: 100%;
 	min-width: ${(p) => (p.$rubber ? "0" : "max-content")};
@@ -55,7 +55,9 @@ const Row = styled.div<{ $rubber: boolean }>`
 	tab-size: 2;
 	font-family: ${(p) => p.theme.mono};
 	font-size: 12px;
-	line-height: 18px;
+	/* The row's height is the SAME number the virtual list spaces by, so a configured
+	   rowHeight never drifts the spacers away from the real rows. */
+	line-height: ${(p) => p.$rowHeight}px;
 `;
 
 const Line = styled.span<{ $mirrored: boolean; $rubber: boolean }>`
@@ -70,13 +72,9 @@ const Line = styled.span<{ $mirrored: boolean; $rubber: boolean }>`
 const Text = styled.span<{ $rubber: boolean }>`
 	display: inline-block;
 	position: relative;
-	/* A DARK UNDERLAY: the row is drawn over a wash (a band, a mark, a bright hot lane),
-	   and white-on-pale was unreadable. The shadow is a backdrop, not a glow — it keeps
-	   the glyph edges where they are and darkens what is behind them. */
-	text-shadow:
-		0 1px 2px rgba(0, 0, 0, 0.95),
-		0 0 2px rgba(0, 0, 0, 0.85),
-		0 -1px 2px rgba(0, 0, 0, 0.6);
+	/* A backdrop under the glyphs so they read on a wash. The theme owns it: the
+	   default is dark (for dark code surfaces), a light theme supplies its own. */
+	text-shadow: ${(p) => p.theme.shadow ?? "0 1px 2px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.85), 0 -1px 2px rgba(0, 0, 0, 0.6)"};
 	${(p) => (p.$rubber ? "flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" : "")}
 `;
 
@@ -120,16 +118,14 @@ const Paint = styled.span<{ $strong?: boolean }>`
 	box-decoration-break: clone;
 	/* The mark is a WASH, not a repaint: the token colour underneath stays, which is what
 	   makes a keyword, a string and an operator still read as themselves on a band. */
-	text-shadow:
-		0 1px 2px rgba(0, 0, 0, 0.95),
-		0 0 2px rgba(0, 0, 0, 0.85);
+	text-shadow: ${(p) => p.theme.shadow ?? "0 1px 2px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.85)"};
 	${(p) => (p.$strong === true ? "outline: 1px solid currentColor;" : "")}
 `;
 
-const Fold = styled.button`
+const Fold = styled.button<{ $rowHeight: number }>`
 	width: 100%;
-	height: 18px;
-	line-height: 18px;
+	height: ${(p) => p.$rowHeight}px;
+	line-height: ${(p) => p.$rowHeight}px;
 	padding: 0;
 	text-align: left;
 	border: 0;
@@ -137,7 +133,7 @@ const Fold = styled.button`
 	border-bottom: 1px dashed ${(p) => p.theme.edge};
 	background: ${(p) => p.theme.paper};
 	color: ${(p) => p.theme.faint};
-	font: italic 10.5px/18px ${(p) => p.theme.mono};
+	font: italic 10.5px/${(p) => p.$rowHeight}px ${(p) => p.theme.mono};
 	white-space: nowrap;
 	cursor: pointer;
 `;
@@ -166,10 +162,10 @@ const piece = (segment: { text: string; paint?: boolean; strong?: boolean; ink?:
 	);
 };
 
-const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], index: number, render: RendererProps<Data>["render"], onAction: RendererProps<Data>["onAction"], rubber: boolean, tokenize: RendererProps<Data>["tokenize"], highlights: RendererProps<Data>["highlight"]): ReactElement => {
+const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], index: number, render: RendererProps<Data>["render"], onAction: RendererProps<Data>["onAction"], rubber: boolean, tokenize: RendererProps<Data>["tokenize"], highlights: RendererProps<Data>["highlight"], rowHeight: number): ReactElement => {
 	if (it.collapsed) {
 		return (
-			<Fold type="button" data-anchor={anchorOf(it)} onClick={() => onAction?.(it)}>
+			<Fold type="button" $rowHeight={rowHeight} data-anchor={anchorOf(it)} onClick={() => onAction?.(it)}>
 				<FoldText>{it.collapsed.text}</FoldText>
 			</Fold>
 		);
@@ -185,7 +181,7 @@ const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], i
 	const segments = it.segments ?? (it.text === undefined ? undefined : buildSegments(it.text, tokenize === undefined ? [] : tokenize(it.text, column.id), marks));
 
 	return (
-		<Row $rubber={rubber} data-anchor={anchorOf(it)}>
+		<Row $rubber={rubber} $rowHeight={rowHeight} data-anchor={anchorOf(it)}>
 			{it.plate === undefined ? null : <Plate $mirrored={column.mirrored === true}>{it.plate}</Plate>}
 			<Line $mirrored={column.mirrored === true} $rubber={rubber}>
 				{/* The ANCHOR is the ROW, not the text inside it: a band measured on the line
@@ -211,8 +207,9 @@ const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], i
  * Visibility is the board's decision (it passed `connected`), so the data source
  * never has to say which lines are folds.
  */
-export const Items = <Data,>({ column, render, onAction, connected, expanded = false, onReveal, onLayout, highlight, fit, tokenize }: RendererProps<Data>): ReactElement => {
+export const Items = <Data,>({ column, render, onAction, connected, expanded = false, onReveal, onLayout, highlight, fit, tokenize, options }: RendererProps<Data>): ReactElement => {
 	const rubber = fit === "rubber";
+	const rowHeight = options?.rowHeight ?? ROW_HEIGHT;
 	const items = column.items ?? [];
 	const shownAt = (it: Item<Data>): boolean => expanded || connected === undefined || connected.has(String(it.id));
 	// WHAT is drawn, in board order — one entry per row, computed once. The ELEMENTS are
@@ -240,22 +237,35 @@ export const Items = <Data,>({ column, render, onAction, connected, expanded = f
 		if (slot === undefined) return null;
 		if ("fold" in slot) {
 			const count = slot.fold;
+			const label = options?.foldLabel ?? ((n: number) => `⋯ ${n} line${n === 1 ? "" : "s"} hidden — click to show`);
 
 			return (
-				<Fold key={`hidden-${at}`} type="button" onClick={() => onReveal?.()}>
-					<FoldText>{`⋯ ${count} line${count === 1 ? "" : "s"} hidden — click to show`}</FoldText>
+				<Fold key={`hidden-${at}`} $rowHeight={rowHeight} type="button" onClick={() => onReveal?.()}>
+					<FoldText>{label(count)}</FoldText>
 				</Fold>
 			);
 		}
 
 		return (
 			<Entry key={String(slot.item.id)} data-item={String(slot.item.id)}>
-				{content(slot.item, column, slot.index, render, onAction, rubber, tokenize, highlight)}
+				{content(slot.item, column, slot.index, render, onAction, rubber, tokenize, highlight, rowHeight)}
 			</Entry>
 		);
 	};
 
-	return <Virtual count={slots.length} rowHeight={ROW_HEIGHT} rubber={rubber} cap={column.cap === true} renderRow={renderRow} onWindow={onLayout} />;
+	return (
+		<Virtual
+			count={slots.length}
+			rowHeight={rowHeight}
+			rubber={rubber}
+			cap={column.cap === true}
+			renderRow={renderRow}
+			onWindow={onLayout}
+			{...(options?.fullMount === undefined ? {} : { fullMount: options.fullMount })}
+			{...(options?.overscan === undefined ? {} : { overscan: options.overscan })}
+			{...(options?.maxHeight === undefined ? {} : { maxHeight: options.maxHeight })}
+		/>
+	);
 };
 
 const Canvas = styled.div`

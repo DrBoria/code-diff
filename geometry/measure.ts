@@ -87,7 +87,7 @@ export interface Layout {
 	readonly anchors: Map<string, Box>;
 }
 
-export const measureLayout = (root: HTMLElement): Layout => {
+export const measureLayout = (root: HTMLElement, gap: number = GAP): Layout => {
 	const frame = root.getBoundingClientRect();
 	const columns = new Map<string, Box>();
 	const anchors = new Map<string, Box>();
@@ -108,8 +108,8 @@ export const measureLayout = (root: HTMLElement): Layout => {
 			// Content coordinates: the row's own place inside the pane, not the place it
 			// happens to be at with the pane scrolled where it is now.
 			const box: Box = {
-				top: rect.top - cell.top + scrolled + GAP,
-				bottom: rect.bottom - cell.top + scrolled - GAP,
+				top: rect.top - cell.top + scrolled + gap,
+				bottom: rect.bottom - cell.top + scrolled - gap,
 				left: rect.left - frame.left,
 				right: rect.right - frame.left,
 			};
