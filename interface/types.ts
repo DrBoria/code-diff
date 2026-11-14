@@ -378,15 +378,12 @@ export interface Theme {
 	readonly paper: string;
 	readonly panel: string;
 	readonly edge: string;
-	readonly edgeStrong: string;
 	readonly text: string;
 	readonly dim: string;
 	readonly faint: string;
 	readonly mono: string;
 	/** Colour of a `Segment.paint`ed piece. */
 	readonly paint?: string;
-	/** Ink of the text INSIDE a painted piece — must contrast with `paint`. */
-	readonly paintInk?: string;
 	/** Stroke of the ribbons between columns. Defaults to the tone colour. */
 	readonly ribbon?: string;
 	/**

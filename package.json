@@ -1,71 +1,71 @@
 {
-	"name": "@md-code/code-diff",
-	"version": "0.3.0",
-	"description": "Generic N-column code diff view: any column kinds, any-to-any links, dynamic one-to-many ribbons.",
-	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"default": "./dist/index.js"
-		},
-		"./view": {
-			"types": "./dist/view.d.ts",
-			"default": "./dist/view.js"
-		},
-		"./interface": {
-			"types": "./dist/interface/types.d.ts",
-			"default": "./dist/interface/types.js"
-		}
-	},
-	"files": [
-		"dist",
-		"interface",
-		"README.md",
-		"LICENSE"
-	],
-	"scripts": {
-		"clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-		"build": "pnpm clean && tsc -p tsconfig.json",
-		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"prepublishOnly": "pnpm build && pnpm test"
-	},
-	"license": "Apache-2.0",
-	"keywords": [
-		"diff",
-		"code-diff",
-		"merge",
-		"three-way-merge",
-		"git",
-		"side-by-side",
-		"react",
-		"comparison"
-	],
-	"sideEffects": false,
-	"peerDependencies": {
-		"react": ">=18",
-		"react-dom": ">=18",
-		"styled-components": ">=6"
-	},
-	"devDependencies": {
-		"@md-code/component-uniqueness": "file:../component-uniqueness",
-		"@md-code/entities-uniqueness": "file:../entities-uniqueness",
-		"@md-code/follow-architecture": "file:../follow-architecture",
-		"@md-code/utils-uniqueness": "file:../utils-uniqueness",
-		"@testing-library/dom": "^10.4.2",
-		"@testing-library/react": "^16.3.3",
-		"@types/react": "^19.3.0",
-		"@types/react-dom": "^19",
-		"eslint": "^10.14.0",
-		"jsdom": "^31.0.1",
-		"react": "^19",
-		"react-dom": "^19",
-		"styled-components": "^6.6.0",
-		"typescript": "^5.9.3",
-		"typescript-eslint": "^8.72.2",
-		"vitest": "^4"
-	}
+  "name": "@md-code/code-diff",
+  "version": "0.4.0",
+  "description": "Generic N-column code diff view: any column kinds, any-to-any links, dynamic one-to-many ribbons.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./view": {
+      "types": "./dist/view.d.ts",
+      "default": "./dist/view.js"
+    },
+    "./interface": {
+      "types": "./dist/interface/types.d.ts",
+      "default": "./dist/interface/types.js"
+    }
+  },
+  "files": [
+    "dist",
+    "interface",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm build && pnpm test"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "diff",
+    "code-diff",
+    "merge",
+    "three-way-merge",
+    "git",
+    "side-by-side",
+    "react",
+    "comparison"
+  ],
+  "sideEffects": false,
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18",
+    "styled-components": ">=6"
+  },
+  "devDependencies": {
+    "@md-code/component-uniqueness": "file:../component-uniqueness",
+    "@md-code/entities-uniqueness": "file:../entities-uniqueness",
+    "@md-code/follow-architecture": "file:../follow-architecture",
+    "@md-code/utils-uniqueness": "file:../utils-uniqueness",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19",
+    "eslint": "^10.14.0",
+    "jsdom": "^31.0.1",
+    "react": "^19",
+    "react-dom": "^19",
+    "styled-components": "^6.6.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^4"
+  }
 }

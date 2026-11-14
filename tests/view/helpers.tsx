@@ -7,13 +7,11 @@ export const theme: Theme = {
 	paper: "#111",
 	panel: "#181818",
 	edge: "#333",
-	edgeStrong: "#555",
 	text: "#eee",
 	dim: "#aaa",
 	faint: "#777",
 	mono: "monospace",
 	paint: "rgba(255,107,107,0.2)",
-	paintInk: "#eee",
 	ribbon: "#eee",
 };
 
