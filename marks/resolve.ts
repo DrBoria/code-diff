@@ -36,8 +36,8 @@ export const resolveLanes = (rows: readonly MarkRow[], columns: readonly string[
 	const marksByLane: KeyedMark[][] = [];
 
 	for (const link of links) {
-		const left = locate(rows, columnIndex(columns, link.leftColumn), link.left.name);
-		const right = locate(rows, columnIndex(columns, link.rightColumn), link.right.name);
+		const left = locate(rows, columnIndex(columns, link.leftColumn), link.left.name, undefined, link.left.line);
+		const right = locate(rows, columnIndex(columns, link.rightColumn), link.right.name, undefined, link.right.line);
 		if (!left || !right) continue;
 		const leftMark = markOf(link.leftColumn, left, link.left.name, link.left.key);
 		const rightMark = markOf(link.rightColumn, right, link.right.name, link.right.key);

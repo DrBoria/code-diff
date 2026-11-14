@@ -33,6 +33,22 @@ describe("rangeOf / locate", () => {
 		const rows = rowsOf(["interface A {", "  id: string;", "}"], ["interface B {", "  id: string;", "}"]);
 		expect(locate(rows, 0, "id")?.line).toBe("2");
 	});
+
+	it("prefers the declaration line over an earlier comment mention", () => {
+		// The name `provider` appears in a doc comment (line 2) BEFORE the real
+		// declaration (line 3). Without a hint the first mention wins; with the
+		// declaration line the model named, the highlight lands on the declaration.
+		const a = ["interface A {", "  /** The provider bridge. */", "  provider: string;", "}"];
+		const b = ["interface B {", "  /** The provider bridge. */", "  provider: string;", "}"];
+		const rows = rowsOf(a, b);
+		expect(locate(rows, 0, "provider")?.line).toBe("2");
+		expect(locate(rows, 0, "provider", undefined, 3)?.line).toBe("3");
+	});
+
+	it("falls back to the first mention when the hinted line is absent", () => {
+		const rows = rowsOf(["interface A {", "  id: string;", "}"], ["interface B {", "  id: string;", "}"]);
+		expect(locate(rows, 0, "id", undefined, 99)?.line).toBe("2");
+	});
 });
 
 describe("resolveLanes", () => {
@@ -59,6 +75,16 @@ describe("resolveLanes", () => {
 		// first left 'a' pairs with first right 'a' (line 1), second with line 2
 		const firstLeft = lanes[0]?.marks.find((m) => m.column === "0");
 		expect(firstLeft?.twin?.line).toBe("1");
+	});
+
+	it("honors the declaration line a link carries (comment mention is skipped)", () => {
+		const a = ["interface A {", "  /** provider docs */", "  provider: string;", "}"];
+		const b = ["interface B {", "  /** provider docs */", "  provider: string;", "}"];
+		const rows = rowsOf(a, b);
+		const lanes = resolveLanes(rows, ["0", "1"], [link("provider", { left: { name: "provider", line: 3 }, right: { name: "provider", line: 3 } })]);
+		expect(lanes.length).toBe(1);
+		expect(lanes[0]?.ends[0]?.items).toEqual(["3"]);
+		expect(lanes[0]?.ends[1]?.items).toEqual(["3"]);
 	});
 });
 

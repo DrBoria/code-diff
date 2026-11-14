@@ -31,15 +31,27 @@ export interface MarkCell {
  * `leftColumn` is the same thing as `right` in `rightColumn`. `name` is what to
  * locate in the row text; `key` (optional) disambiguates two members that share a
  * name (a property's value, a method's signature) so twins pair by identity first.
+ *
+ * `line` (optional) is the 1-based source line the member is DECLARED on. The
+ * model knows it from the parser; the view uses it to prefer the declaration row
+ * over an earlier mention of the same word (e.g. in a doc comment above it). It
+ * is a fact about WHERE the member is, not a character range — the view still
+ * computes the range.
  */
+export interface MemberLinkEnd {
+	readonly name: string;
+	readonly key?: string;
+	readonly line?: number;
+}
+
 export interface MemberLink {
 	readonly connectionId: string;
 	readonly label?: string;
 	readonly tone?: string;
 	readonly leftColumn: string;
 	readonly rightColumn: string;
-	readonly left: { readonly name: string; readonly key?: string };
-	readonly right: { readonly name: string; readonly key?: string };
+	readonly left: MemberLinkEnd;
+	readonly right: MemberLinkEnd;
 }
 
 /** A resolved lane: a Connection plus the marks (with twins) the view computed. */

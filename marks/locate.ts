@@ -35,21 +35,37 @@ export interface Located {
  * Find the first row in `column` whose text declares `name`, and the name's range
  * on it. `predicate` lets the caller restrict which rows count (a declaration
  * head, a member line) without this module knowing the domain.
+ *
+ * `line` (optional) is the 1-based source line the model says the member is
+ * declared on. When given, the row with that number wins over any earlier mention
+ * of the same word (a doc comment above the declaration, a use elsewhere) — the
+ * model knows WHERE the member is; the view still computes the character range.
+ * If no row carries that line, the first matching row is used as before.
  */
-export const locate = (rows: readonly MarkRow[], column: number, name: string, predicate?: (text: string) => boolean): Located | null => {
-	for (const row of rows) {
-		if (row.type === "fold") {
-			const nested = row.rows ? locate(row.rows, column, name, predicate) : null;
-			if (nested) return nested;
-			continue;
+export const locate = (rows: readonly MarkRow[], column: number, name: string, predicate?: (text: string) => boolean, line?: number): Located | null => {
+	let fallback: Located | null = null;
+	const visit = (list: readonly MarkRow[]): Located | null => {
+		for (const row of list) {
+			if (row.type === "fold") {
+				const nested = row.rows ? visit(row.rows) : null;
+				if (nested) return nested;
+				continue;
+			}
+			const cell = row.cells[column];
+			if (!cell || cell.no == null) continue;
+			const text = cellText(cell);
+			if (predicate && !predicate(text)) continue;
+			const range = rangeOf(text, name);
+			if (!range) continue;
+			const found = { line: String(cell.no), from: range.from, to: range.to };
+			// The declaration line the model named wins outright.
+			if (line != null && String(cell.no) === String(line)) return found;
+			if (!fallback) fallback = found;
 		}
-		const cell = row.cells[column];
-		if (!cell || cell.no == null) continue;
-		const text = cellText(cell);
-		if (predicate && !predicate(text)) continue;
-		const range = rangeOf(text, name);
-		if (range) return { line: String(cell.no), from: range.from, to: range.to };
-	}
 
-	return null;
+		return null;
+	};
+	const exact = visit(rows);
+
+	return exact ?? fallback;
 };
