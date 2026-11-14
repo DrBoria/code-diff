@@ -28,6 +28,7 @@
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "pnpm clean && tsc -p tsconfig.json",
+    "build:demo": "esbuild demo/app.tsx --bundle --outfile=demo/app.js --format=iife --jsx=automatic --loader:.ts=ts --loader:.tsx=tsx --define:process.env.NODE_ENV=\\\"production\\\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -59,6 +60,7 @@
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19",
+    "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
     "jsdom": "^31.0.1",
     "react": "^19",
