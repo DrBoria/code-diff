@@ -111,8 +111,8 @@ const Note = styled.span`
 // takes a contrasting ink, so a marked keyword stays readable on the mark.
 // A STRONG range is the occurrence a lane under the pointer stands for: the same
 // mark, held brighter, so the reader sees exactly which piece is being talked about.
-const Paint = styled.span<{ $strong?: boolean }>`
-	background: ${(p) => p.theme.paint ?? "transparent"};
+const Paint = styled.span<{ $strong?: boolean; $paint?: string }>`
+	background: ${(p) => p.$paint ?? p.theme.paint ?? "transparent"};
 	border-radius: 2px;
 	text-decoration: underline;
 	box-decoration-break: clone;
@@ -147,14 +147,14 @@ const FoldText = styled.span`
 	padding: 0 8px;
 `;
 
-const piece = (segment: { text: string; paint?: boolean; strong?: boolean; ink?: string }, at: number): ReactElement => {
+const piece = (segment: { text: string; paint?: boolean; strong?: boolean; ink?: string }, at: number, paint?: string): ReactElement => {
 	const ink = segment.ink === undefined ? undefined : { color: segment.ink };
 
 	// A painted piece KEEPS its token colour and takes the mark as a wash behind it: the
 	// mark says "this range is the one the lane is about", the colour says what the code
 	// IS. Dropping the ink turned every marked range into the same white slab.
 	return segment.paint ? (
-		<Paint key={at} $strong={segment.strong === true} style={ink}>{segment.text}</Paint>
+		<Paint key={at} $strong={segment.strong === true} {...(paint === undefined ? {} : { $paint: paint })} style={ink}>{segment.text}</Paint>
 	) : (
 		<span key={at} style={ink}>
 			{segment.text}
@@ -162,7 +162,7 @@ const piece = (segment: { text: string; paint?: boolean; strong?: boolean; ink?:
 	);
 };
 
-const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], index: number, render: RendererProps<Data>["render"], onAction: RendererProps<Data>["onAction"], rubber: boolean, tokenize: RendererProps<Data>["tokenize"], highlights: RendererProps<Data>["highlight"], rowHeight: number): ReactElement => {
+const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], index: number, render: RendererProps<Data>["render"], onAction: RendererProps<Data>["onAction"], rubber: boolean, tokenize: RendererProps<Data>["tokenize"], highlights: RendererProps<Data>["highlight"], rowHeight: number, tones: RendererProps<Data>["tones"]): ReactElement => {
 	if (it.collapsed) {
 		return (
 			<Fold type="button" $rowHeight={rowHeight} data-anchor={anchorOf(it)} onClick={() => onAction?.(it)}>
@@ -179,6 +179,9 @@ const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], i
 	const focus = highlights?.get(String(it.id)) ?? [];
 	const marks = focus.length === 0 ? (it.marks ?? []) : [...(it.marks ?? []), ...focus];
 	const segments = it.segments ?? (it.text === undefined ? undefined : buildSegments(it.text, tokenize === undefined ? [] : tokenize(it.text, column.id), marks));
+	// A standing mark takes ITS ROW'S tone paint, not one flat theme colour: a unique
+	// (green) value must read green on the word itself, not red on a green row.
+	const rowPaint = it.tone === undefined ? undefined : tones?.[it.tone]?.paint;
 
 	return (
 		<Row $rubber={rubber} $rowHeight={rowHeight} data-anchor={anchorOf(it)}>
@@ -188,7 +191,7 @@ const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], i
 				    box was 13px tall inside an 18px row, so the wash was a stripe with gaps and
 				    a ribbon met a band thinner than the row it joins. */}
 				<Text $rubber={rubber}>
-					{(segments ?? []).map(piece)}
+					{(segments ?? []).map((segment, at) => piece(segment, at, rowPaint))}
 					{segments === undefined ? <span>{String(it.id)}</span> : null}
 					{(it.notes ?? []).map((note, at) => (
 						<NoteAnchor key={`note-${at}`} style={{ left: `${note.from}ch` }}>
@@ -207,7 +210,7 @@ const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], i
  * Visibility is the board's decision (it passed `connected`), so the data source
  * never has to say which lines are folds.
  */
-export const Items = <Data,>({ column, render, onAction, connected, expanded = false, onReveal, onLayout, highlight, fit, tokenize, options }: RendererProps<Data>): ReactElement => {
+export const Items = <Data,>({ column, render, onAction, connected, expanded = false, onReveal, onLayout, highlight, fit, tokenize, options, tones }: RendererProps<Data>): ReactElement => {
 	const rubber = fit === "rubber";
 	const rowHeight = options?.rowHeight ?? ROW_HEIGHT;
 	const items = column.items ?? [];
@@ -248,7 +251,7 @@ export const Items = <Data,>({ column, render, onAction, connected, expanded = f
 
 		return (
 			<Entry key={String(slot.item.id)} data-item={String(slot.item.id)}>
-				{content(slot.item, column, slot.index, render, onAction, rubber, tokenize, highlight, rowHeight)}
+				{content(slot.item, column, slot.index, render, onAction, rubber, tokenize, highlight, rowHeight, tones)}
 			</Entry>
 		);
 	};

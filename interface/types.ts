@@ -217,12 +217,14 @@ export interface LaneMark {
 	readonly line: string;
 	readonly from: number;
 	readonly to: number;
+	/** The ink this range is underlined in when focused; absent = the theme paint. */
+	readonly ink?: string;
 	/**
 	 * THE DUPLICATE of this very range: where the same name is written on the other side.
 	 * A lane joins rows, but a reader points at a WORD — and the answer to "what is this
 	 * duplicated with?" is one range over there, not the row it happens to sit in.
 	 */
-	readonly twin?: { readonly column: string; readonly line: string; readonly from: number; readonly to: number };
+	readonly twin?: { readonly column: string; readonly line: string; readonly from: number; readonly to: number; readonly ink?: string };
 }
 
 /** A colour key the owner supplied. The package never derives a colour. */
@@ -235,6 +237,12 @@ export interface Tone {
 	 * row that has to be darker than its neighbours.
 	 */
 	readonly hot?: string;
+	/**
+	 * The wash behind a STANDING mark on a row of this tone. Without it every marked
+	 * word takes `theme.paint` regardless of tone — a unique (green) value would read
+	 * red on the word itself. Absent = `theme.paint`.
+	 */
+	readonly paint?: string;
 }
 
 export type Tones = Readonly<Record<string, Tone>>;
@@ -366,6 +374,11 @@ export interface RendererProps<Data = never> {
 	readonly highlight?: ReadonlyMap<string, readonly Mark[]> | undefined;
 	/** The resolved display knobs (row height, virtual-scroll thresholds, …). */
 	readonly options?: import("../config.js").ResolvedOptions;
+	/**
+	 * The owner's tone colours, so a renderer can paint a standing mark in its row's
+	 * tone (`tones[item.tone].paint`) instead of one flat `theme.paint`.
+	 */
+	readonly tones?: Tones;
 }
 
 /** One renderer per column `kind`. Any kind may be replaced by the caller. */
@@ -414,6 +427,13 @@ export interface ViewProps<Data = never> {
 	readonly reveal?: boolean;
 	readonly tones?: Tones;
 	readonly theme: Theme;
+	/**
+	 * When true, hovering ANY piece of a lane lights the WHOLE path — every mark of
+	 * that lane in every column (code word → snapshot → match → snapshot → code word),
+	 * not just the hovered column. Used by multi-column snapshot boards where each row
+	 * belongs to exactly one correspondence, so visual tracking never breaks mid-path.
+	 */
+	readonly pathTracking?: boolean;
 	readonly renderers?: Partial<Renderers> | undefined;
 	/** The item plugin given to EVERY renderer — your own code rendering. */
 	readonly render?: ItemRender<Data> | undefined;

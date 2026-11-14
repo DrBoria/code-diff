@@ -146,7 +146,7 @@ interface LaneNode {
 	readonly caption: SVGTextElement;
 }
 
-export const Surface = <Data,>({ columns, connections = [], corridors = [], sync = [], reveal = false, tones = {}, renderers = {}, render, theme, onAction, fit, tokenize, options, controller }: ViewProps<Data>): ReactElement => {
+export const Surface = <Data,>({ columns, connections = [], corridors = [], sync = [], reveal = false, tones = {}, renderers = {}, render, theme, onAction, fit, tokenize, options, controller, pathTracking = false }: ViewProps<Data>): ReactElement => {
 	// The display knobs, resolved once: the owner's overrides on top of the defaults.
 	const config = useMemo(() => resolveOptions(options), [options]);
 	// THE LAYOUT, NOT THE SCROLL: measured boxes with the scroll taken out, so a
@@ -401,20 +401,24 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 	// "which range is THIS row", and answering with the whole lane's ranges lit the
 	// entire block under the pointer. A row hover lights only what sits on that row.
 	const fromRow = laneHover === null && hover !== null;
-	const highlights = new Map<string, Map<string, { from: number; to: number; strong: boolean }[]>>();
-	const addHighlight = (mark: { column: string; line: string; from: number; to: number }): void => {
-		const rows = highlights.get(mark.column) ?? new Map<string, { from: number; to: number; strong: boolean }[]>();
+	const highlights = new Map<string, Map<string, { from: number; to: number; strong: boolean; ink?: string }[]>>();
+	const addHighlight = (mark: { column: string; line: string; from: number; to: number; ink?: string }): void => {
+		const rows = highlights.get(mark.column) ?? new Map<string, { from: number; to: number; strong: boolean; ink?: string }[]>();
 		const list = rows.get(String(mark.line)) ?? [];
-		list.push({ from: mark.from, to: mark.to, strong: true });
+		list.push({ from: mark.from, to: mark.to, strong: true, ...(mark.ink === undefined ? {} : { ink: mark.ink }) });
 		rows.set(String(mark.line), list);
 		highlights.set(mark.column, rows);
 	};
 	for (const index of focused) {
-		const line = fromRow && hover !== null ? lineOf(hover.column, hover.item) : null;
+		// PATH TRACKING: light every mark of the focused lane in every column, so the
+		// whole correspondence (code word → snapshot → match → snapshot → code word)
+		// stays visible. Without it, a row hover only lights the hovered column and the
+		// reader loses the thread mid-path.
+		const line = !pathTracking && fromRow && hover !== null ? lineOf(hover.column, hover.item) : null;
 		for (const mark of shown[index]?.marks ?? []) {
 			if (line !== null && (hover === null || mark.column !== hover.column || String(mark.line) !== line)) continue;
 			// The exact piece under the pointer: the same range the lane was narrowed to.
-			if (piece !== null && (mark.from !== piece.from || mark.to !== piece.to)) continue;
+			if (!pathTracking && piece !== null && (mark.from !== piece.from || mark.to !== piece.to)) continue;
 			// A character that sits on NO mark of the lane (`totalActions`, `cursor` in a
 			// property-assignment row) still belongs to this row's lane: the answer is every
 			// range the lane holds on this line, not silence.
@@ -745,6 +749,7 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 									}}
 									{...(fit === undefined ? {} : { fit })}
 									{...(tokenize === undefined ? {} : { tokenize })}
+									tones={tones}
 									options={config}
 								/>
 							</Cell>
