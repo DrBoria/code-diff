@@ -100,6 +100,29 @@ export interface Collapsed {
 	readonly text: string;
 }
 
+/**
+ * A logical BLOCK: one parent row (a header — a node, a declaration, a style
+ * group) and the member rows that belong to it (its properties, its children).
+ * The board draws the members indented under the parent and, when the pointer is
+ * on ANY row of the block, lights the WHOLE block — parent included — in every
+ * column the block names. The owner decides the grouping; the view only draws it.
+ */
+export interface Block {
+	readonly id: string;
+	/**
+	 * The parent/header row(s) of the block — one end per column the header appears
+	 * in (a style header sits in the left, match and right columns at once). Drawn
+	 * emphasised and washed strongest when the block is hovered.
+	 */
+	readonly parent: readonly ConnectionEnd[];
+	/** The member rows under the parent, per column. Indented one level. */
+	readonly members?: readonly ConnectionEnd[];
+	/** How deep the members sit under the parent, in indent levels. Default 1. */
+	readonly depth?: number;
+	/** The tone of the block's wash; absent = the parent row's own tone. */
+	readonly tone?: string;
+}
+
 /** One entry of a column: a line, a node, a card. `data` is opaque. */
 export interface Item<Data = never> extends Identified, Anchored {
 	readonly data?: Data;
@@ -125,6 +148,16 @@ export interface Item<Data = never> extends Identified, Anchored {
 	readonly line?: string;
 	/** Present when this item stands for a folded run of rows. */
 	readonly collapsed?: Collapsed;
+	/**
+	 * Indent level of this row inside its block (0 = a parent/header, 1 = a member,
+	 * …). The renderer shifts the text right by this many levels so a block reads
+	 * as a tree even before the pointer arrives. Default 0.
+	 */
+	readonly indent?: number;
+	/** The block this row belongs to, when the owner grouped rows into blocks. */
+	readonly block?: string;
+	/** True when this row is the PARENT/header of its block (drawn emphasised). */
+	readonly blockParent?: boolean;
 }
 
 /** A reference to a node: inside this column, or inside another one. */
@@ -410,6 +443,14 @@ export interface Theme {
 export interface ViewProps<Data = never> {
 	readonly columns: readonly Column<Data>[];
 	readonly connections?: readonly Connection[];
+	/**
+	 * Logical blocks the owner grouped rows into (a header + its members). The board
+	 * indents members under their parent and, on hover of any row of a block, lights
+	 * the whole block — parent included — across every column the block names. Blocks
+	 * are independent of connections: a block is "these rows are one unit", a connection
+	 * is "this row corresponds to that row over there".
+	 */
+	readonly blocks?: readonly Block[];
 	/** Corridor width in pixels after each column; `undefined` = no corridor. */
 	readonly corridors?: readonly (number | undefined)[];
 	/**

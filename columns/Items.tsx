@@ -60,18 +60,24 @@ const Row = styled.div<{ $rubber: boolean; $rowHeight: number }>`
 	line-height: ${(p) => p.$rowHeight}px;
 `;
 
-const Line = styled.span<{ $mirrored: boolean; $rubber: boolean }>`
+const Line = styled.span<{ $mirrored: boolean; $rubber: boolean; $indent: number }>`
 	display: flex;
 	flex: 1 1 auto;
 	min-width: 0;
 	padding: 0 8px;
+	/* A block member sits under its parent: one indent level is two spaces of the
+	   code font, so a header and its styles read as a tree before any hover. */
+	padding-left: ${(p) => 8 + p.$indent * 16}px;
 	justify-content: flex-start;
 	overflow: ${(p) => (p.$rubber ? "hidden" : "visible")};
 `;
 
-const Text = styled.span<{ $rubber: boolean }>`
+const Text = styled.span<{ $rubber: boolean; $parent?: boolean }>`
 	display: inline-block;
 	position: relative;
+	/* A block PARENT (a header) reads as the head of its group: a touch heavier and
+	   in the full text colour, so the eye finds the block before the pointer does. */
+	font-weight: ${(p) => (p.$parent === true ? 600 : 400)};
 	/* A backdrop under the glyphs so they read on a wash. The theme owns it: the
 	   default is dark (for dark code surfaces), a light theme supplies its own. */
 	text-shadow: ${(p) => p.theme.shadow ?? "0 1px 2px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.85), 0 -1px 2px rgba(0, 0, 0, 0.6)"};
@@ -186,11 +192,11 @@ const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], i
 	return (
 		<Row $rubber={rubber} $rowHeight={rowHeight} data-anchor={anchorOf(it)}>
 			{it.plate === undefined ? null : <Plate $mirrored={column.mirrored === true}>{it.plate}</Plate>}
-			<Line $mirrored={column.mirrored === true} $rubber={rubber}>
+			<Line $mirrored={column.mirrored === true} $rubber={rubber} $indent={it.indent ?? 0}>
 				{/* The ANCHOR is the ROW, not the text inside it: a band measured on the line
 				    box was 13px tall inside an 18px row, so the wash was a stripe with gaps and
 				    a ribbon met a band thinner than the row it joins. */}
-				<Text $rubber={rubber}>
+				<Text $rubber={rubber} $parent={it.blockParent === true}>
 					{(segments ?? []).map((segment, at) => piece(segment, at, rowPaint))}
 					{segments === undefined ? <span>{String(it.id)}</span> : null}
 					{(it.notes ?? []).map((note, at) => (

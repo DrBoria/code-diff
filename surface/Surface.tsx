@@ -146,7 +146,7 @@ interface LaneNode {
 	readonly caption: SVGTextElement;
 }
 
-export const Surface = <Data,>({ columns, connections = [], corridors = [], sync = [], reveal = false, tones = {}, renderers = {}, render, theme, onAction, fit, tokenize, options, controller, pathTracking = false }: ViewProps<Data>): ReactElement => {
+export const Surface = <Data,>({ columns, connections = [], blocks = [], corridors = [], sync = [], reveal = false, tones = {}, renderers = {}, render, theme, onAction, fit, tokenize, options, controller, pathTracking = false }: ViewProps<Data>): ReactElement => {
 	// The display knobs, resolved once: the owner's overrides on top of the defaults.
 	const config = useMemo(() => resolveOptions(options), [options]);
 	// THE LAYOUT, NOT THE SCROLL: measured boxes with the scroll taken out, so a
@@ -456,6 +456,63 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 	}, [columns]);
 	const toneOf: ToneLookup = (column, id) => toneMap.get(`${column}\u0000${String(id)}`) ?? null;
 
+	// ── BLOCKS ──────────────────────────────────────────────────────────────
+	//
+	// A block is "these rows are one unit" (a header + its members), independent of
+	// the lanes. The owner grouped the rows; the view only draws the grouping:
+	// members indented under their parent (the renderer does that from `item.indent`),
+	// and — when the pointer is on ANY row of a block — the WHOLE block lit, parent
+	// included, in every column the block names. A block is found by the row under
+	// the pointer (or the lane under the pointer, via its ends).
+	const blockRows = useMemo(() => {
+		// column → item id → block id, and the reverse: block id → its rows per column.
+		const byRow = new Map<string, string>();
+		const rowsOfBlock = new Map<string, Map<string, string[]>>();
+		const parentsOfBlock = new Map<string, Set<string>>();
+		const toneOfBlock = new Map<string, string>();
+		for (const block of blocks) {
+			const perColumn = new Map<string, string[]>();
+			const parents = new Set<string>();
+			const add = (end: { column: string; items: readonly (string | number)[] }, isParent: boolean) => {
+				const list = perColumn.get(end.column) ?? [];
+				for (const id of end.items) {
+					const key = `${end.column}\u0000${String(id)}`;
+					byRow.set(key, block.id);
+					list.push(String(id));
+					if (isParent) parents.add(key);
+				}
+				perColumn.set(end.column, list);
+			};
+			for (const end of block.parent) add(end, true);
+			for (const end of block.members ?? []) add(end, false);
+			rowsOfBlock.set(block.id, perColumn);
+			parentsOfBlock.set(block.id, parents);
+			if (block.tone !== undefined) toneOfBlock.set(block.id, block.tone);
+		}
+
+		return { byRow, rowsOfBlock, parentsOfBlock, toneOfBlock };
+	}, [blocks]);
+
+	// The block the pointer is on: a row names its block directly; a lane names it
+	// through any end that sits in a block. Null when the pointer is on no block.
+	const hoveredBlock = useMemo((): string | null => {
+		if (hover !== null) {
+			const direct = blockRows.byRow.get(`${hover.column}\u0000${hover.item}`);
+			if (direct !== undefined) return direct;
+		}
+		if (laneHover !== null) {
+			const lane = shown[laneHover];
+			for (const end of lane?.ends ?? []) {
+				for (const id of end.items) {
+					const found = blockRows.byRow.get(`${end.column}\u0000${String(id)}`);
+					if (found !== undefined) return found;
+				}
+			}
+		}
+
+		return null;
+	}, [hover, laneHover, shown, blockRows]);
+
 	const paint = (): void => {
 		const svg = layer.current;
 		const element = root.current;
@@ -521,6 +578,36 @@ export const Surface = <Data,>({ columns, connections = [], corridors = [], sync
 		for (const { column, tone, spans } of spansOf.values()) bandChildren.push(...bandPaths(column, spans, tones[tone]?.fill ?? "transparent"));
 		// LAST, so it lands on top: the pointed-at lane's rows in the stronger fill.
 		for (const { column, tone, spans } of hotSpansOf.values()) bandChildren.push(...bandPaths(column, spans, tones[tone]?.hot ?? tones[tone]?.fill ?? "transparent"));
+
+		// ── THE HOVERED BLOCK ─────────────────────────────────────────────────
+		//
+		// A block is one unit (a header + its members). When the pointer is on any of
+		// its rows, the WHOLE block is washed in every column it names — the parent
+		// included — so the reader sees the group, not just the one row touched. The
+		// parent gets the stronger `hot` fill so the head of the block reads first.
+		if (hoveredBlock !== null) {
+			const perColumn = blockRows.rowsOfBlock.get(hoveredBlock);
+			const parents = blockRows.parentsOfBlock.get(hoveredBlock) ?? new Set<string>();
+			if (perColumn !== undefined) {
+				const blockTone = blockRows.toneOfBlock.get(hoveredBlock) ?? "same";
+				const fill = tones[blockTone]?.hot ?? tones[blockTone]?.fill ?? "transparent";
+				for (const [column, ids] of perColumn) {
+					const memberSpans: Span[] = [];
+					const parentSpans: Span[] = [];
+					for (const id of ids) {
+						const box = lookup(column, id);
+						if (box === null) continue;
+						const span = { top: box.top, bottom: box.bottom };
+						if (parents.has(`${column}\u0000${id}`)) parentSpans.push(span);
+						else memberSpans.push(span);
+					}
+					bandChildren.push(...bandPaths(column, memberSpans, fill));
+					// The parent header is washed once more on top, so the head of the
+					// block reads stronger than its members.
+					bandChildren.push(...bandPaths(column, parentSpans, fill));
+				}
+			}
+		}
 		if (bandLayer.current === null) {
 			bandLayer.current = document.createElementNS(NS, "g");
 			svg.append(bandLayer.current);
