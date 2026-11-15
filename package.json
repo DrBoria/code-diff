@@ -1,6 +1,6 @@
 {
   "name": "@md-code/code-diff",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Generic N-column code diff view: any column kinds, any-to-any links, dynamic one-to-many ribbons.",
   "type": "module",
   "main": "./dist/index.js",

@@ -794,17 +794,16 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 				svg.append(group, caption);
 			}
 
-		// The RIBBON is a road, not a wash: it takes the tone's `line` colour (a stronger
-		// stroke than the row band) so the path between columns is actually visible on a
-		// dark surface. Falling back to the band's whisper-alpha fill made every ribbon
-		// invisible — "where are all the ribbons?".
+		// The RIBBON is a thin LINE, not a filled slab: a stroked centreline from one
+		// block to the other. A filled band read as a bright block in the corridor ("what
+		// is this bright thing?"); a 1.5px road reads as a connection. It takes the tone's
+		// `line` colour so the path is visible on a dark surface without shouting.
 		const isHot = hotIndices.has(index);
 		// ONE uniform shade from the first column to the last. A hot lane takes `lineHot`
-		// (the same hue held a little stronger) and is painted ONCE — never the road laid
-		// down twice, which stacked the alpha into a wild bright bend in the middle and
-		// read as "the line changes colour half-way". The hue never moves along the path.
+		// (the same hue held a little stronger) and a slightly heavier stroke — never a
+		// different colour, never a doubled paint. The hue never moves along the path.
 		const tone = tones[shape.tone];
-		const fill = isHot
+		const stroke = isHot
 			? (tone?.lineHot ?? tone?.line ?? tone?.fill ?? theme.ribbon ?? "transparent")
 			: (tone?.line ?? tone?.fill ?? theme.ribbon ?? "transparent");
 			node.group.setAttribute("data-lane", shape.id);
@@ -815,9 +814,21 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 			// here owns its ribbons, its caption and its hover.
 			const children: SVGElement[] = [];
 			for (const ribbon of shape.ribbons) {
+				// A wide TRANSPARENT stroke under the line: the hit area a pointer can land
+				// on, so a 1.5px road is still easy to hover and click. It draws nothing.
+				const hit = document.createElementNS(NS, "path");
+				hit.setAttribute("d", ribbon.path);
+				hit.setAttribute("fill", "none");
+				hit.setAttribute("stroke", "transparent");
+				hit.setAttribute("stroke-width", "12");
+				children.push(hit);
+				// The visible road: one thin stroke, round caps, no fill.
 				const path = document.createElementNS(NS, "path");
 				path.setAttribute("d", ribbon.path);
-				path.setAttribute("fill", fill);
+				path.setAttribute("fill", "none");
+				path.setAttribute("stroke", stroke);
+				path.setAttribute("stroke-width", isHot ? "2.5" : "1.5");
+				path.setAttribute("stroke-linecap", "round");
 				children.push(path);
 			}
 			// REPLACED, not appended: a lane owns one fixed set of nodes, so a board that

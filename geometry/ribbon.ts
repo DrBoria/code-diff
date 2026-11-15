@@ -154,20 +154,20 @@ const bandPath = (span: Span, left: number, right: number): string =>
 		"Z",
 	].join(" ");
 
+/** The vertical centre of a block: the row a thin line attaches to. */
+const centreOf = (box: Box): number => round((box.top + box.bottom) / 2);
+
 /**
- * A straight ribbon between two blocks (used when a connection touches more than
- * two columns). Top/bottom edges are cubic beziers, so unequal heights fan out.
+ * A thin LINE between two blocks (used when a connection touches more than two
+ * columns). One cubic bezier from the centre of one block to the centre of the
+ * other — a road, not a filled slab. Stroked by the board, never filled.
  */
 const ribbonPath = (a: Box, ax: number, b: Box, bx: number): string => {
 	const mid = round((ax + bx) / 2);
+	const ay = centreOf(a);
+	const by = centreOf(b);
 
-	return [
-		`M ${round(ax)} ${round(a.top)}`,
-		`C ${mid} ${round(a.top)} ${mid} ${round(b.top)} ${round(bx)} ${round(b.top)}`,
-		`L ${round(bx)} ${round(b.bottom)}`,
-		`C ${mid} ${round(b.bottom)} ${mid} ${round(a.bottom)} ${round(ax)} ${round(a.bottom)}`,
-		"Z",
-	].join(" ");
+	return `M ${round(ax)} ${ay} C ${mid} ${ay} ${mid} ${by} ${round(bx)} ${by}`;
 };
 
 /** The vertical run two boxes share: how tall a band between them can be. */
@@ -200,33 +200,29 @@ const waistOf = (a: Box, b: Box, ax: number, bx: number, labelWidth = 0, dip = 0
 };
 
 /**
- * Two full-width bands joined through the corridor: each edge climbs from the
- * full block height to a FLAT plateau at the top rows (where the caption sits),
- * then back to the other block. The plateau is a straight segment, so scrolling
- * never drags the label; the curves only live near the columns.
+ * A thin LINE joining two blocks through the corridor: it leaves the centre of
+ * one block, climbs to a FLAT plateau (where the caption sits), runs straight,
+ * then descends to the centre of the other block. One open path, stroked by the
+ * board — never a filled slab. The plateau is straight so scrolling never drags
+ * the label; the curves only live near the columns.
  *
  * The climb turns over 45% of the run on each side instead of meeting in the
  * exact middle: the same shape, with the bend barely softened.
  */
 const waistPath = (a: Box, ax: number, b: Box, bx: number, labelWidth = 0, dip = 0): string => {
-	const { midX, nodeY, half, plateau } = waistOf(a, b, ax, bx, labelWidth, dip);
-	const nTop = round(nodeY - half);
-	const nBot = round(nodeY + half);
+	const { midX, nodeY, plateau } = waistOf(a, b, ax, bx, labelWidth, dip);
+	const ay = centreOf(a);
+	const by = centreOf(b);
 	const pL = round(midX - plateau);
 	const pR = round(midX + plateau);
 	const runL = (pL - ax) * 0.45;
 	const runR = (bx - pR) * 0.45;
 
 	return [
-		`M ${round(ax)} ${round(a.top)}`,
-		`C ${round(ax + runL)} ${round(a.top)} ${round(pL - runL)} ${nTop} ${pL} ${nTop}`,
-		`L ${pR} ${nTop}`,
-		`C ${round(pR + runR)} ${nTop} ${round(bx - runR)} ${round(b.top)} ${round(bx)} ${round(b.top)}`,
-		`L ${round(bx)} ${round(b.bottom)}`,
-		`C ${round(bx - runR)} ${round(b.bottom)} ${round(pR + runR)} ${nBot} ${pR} ${nBot}`,
-		`L ${pL} ${nBot}`,
-		`C ${round(pL - runL)} ${nBot} ${round(ax + runL)} ${round(a.bottom)} ${round(ax)} ${round(a.bottom)}`,
-		"Z",
+		`M ${round(ax)} ${ay}`,
+		`C ${round(ax + runL)} ${ay} ${round(pL - runL)} ${nodeY} ${pL} ${nodeY}`,
+		`L ${pR} ${nodeY}`,
+		`C ${round(pR + runR)} ${nodeY} ${round(bx - runR)} ${by} ${round(bx)} ${by}`,
 	].join(" ");
 };
 

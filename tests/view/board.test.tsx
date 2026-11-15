@@ -90,10 +90,13 @@ describe("a hot ribbon is one uniform shade", () => {
 		const lane = document.querySelector('[data-lane="c"]') as SVGGElement;
 		expect(lane).toBeTruthy();
 		// Hover the lane: it becomes hot. jsdom has no layout, so the ribbon path may be
-		// empty — but the lane owns exactly ONE path per ribbon, never a doubled stack.
+		// empty — but the lane owns ONE visible stroke per ribbon (plus a transparent
+		// hit-area), never a doubled stack of the road itself.
 		fireEvent.pointerOver(lane);
-		const paths = lane.querySelectorAll("path");
-		// One ribbon between two columns → one path, hot or not.
-		expect(paths.length).toBeLessThanOrEqual(1);
+		const visible = [...lane.querySelectorAll("path")].filter((p) => p.getAttribute("stroke") !== "transparent");
+		// One ribbon between two columns → one visible line, hot or not.
+		expect(visible.length).toBeLessThanOrEqual(1);
+		// The road is a STROKE, never a filled slab.
+		for (const p of visible) expect(p.getAttribute("fill")).toBe("none");
 	});
 });
