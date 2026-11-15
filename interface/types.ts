@@ -517,8 +517,14 @@ export interface BoardOptions {
 	readonly overscan?: number;
 	/** An id in this many lanes is a hub; a hover does not walk through it. Default 3. */
 	readonly hubLanes?: number;
-	/** Max height of an uncapped pane (a CSS length). Default "74vh". */
+	/** Max height of an uncapped pane (a CSS length). Default "70vh". */
 	readonly maxHeight?: string;
+	/**
+	 * A fixed height for the whole board (a CSS length). When set, every column
+	 * scrolls inside it and the board never grows past it — a long file stays
+	 * reachable in a bounded, scrollable region instead of stretching the page.
+	 */
+	readonly boardHeight?: string;
 	/**
 	 * Whether columns hide rows that take part in no connection (folding them into
 	 * "N hidden — click to show"). Default true (the comparison view). A git/merge

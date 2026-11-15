@@ -270,6 +270,7 @@ export const Items = <Data,>({ column, render, onAction, connected, expanded = f
 			cap={column.cap === true}
 			renderRow={renderRow}
 			onWindow={onLayout}
+			bounded={options?.boardHeight !== undefined}
 			{...(options?.fullMount === undefined ? {} : { fullMount: options.fullMount })}
 			{...(options?.overscan === undefined ? {} : { overscan: options.overscan })}
 			{...(options?.maxHeight === undefined ? {} : { maxHeight: options.maxHeight })}

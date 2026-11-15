@@ -17,13 +17,27 @@ import styled from "styled-components";
  * reads a pane's `scrollTop` to place a lane: the scroller must not move.
  */
 
-const Scroller = styled.div<{ $rubber: boolean; $cap: boolean; $maxHeight: string }>`
+const Scroller = styled.div<{ $rubber: boolean; $cap: boolean; $maxHeight: string; $bounded: boolean }>`
 	overflow-x: ${(p) => (p.$rubber ? "hidden" : "auto")};
 	overflow-y: auto;
-	/* Capped: the board's height is the ceiling (the column does not set it). */
-	max-height: ${(p) => (p.$cap ? "100%" : p.$maxHeight)};
-	scrollbar-width: none;
-	&::-webkit-scrollbar { width: 0; height: 0; display: none; }
+	/* A bounded board gives every pane a definite height to fill and scroll inside;
+	   otherwise the pane is capped by the board's height (the column does not set it). */
+	height: ${(p) => (p.$bounded ? "100%" : "auto")};
+	max-height: ${(p) => (p.$cap || p.$bounded ? "100%" : p.$maxHeight)};
+	/* The scrollbar is part of the artifact, drawn in the board's own palette — a
+	   thin thumb on a transparent track, never the browser default and never hidden
+	   (a hidden scrollbar made a tall pane look like it could not scroll at all). */
+	scrollbar-width: thin;
+	scrollbar-color: ${(p) => p.theme.edge} transparent;
+	&::-webkit-scrollbar { width: 10px; height: 10px; }
+	&::-webkit-scrollbar-track { background: transparent; }
+	&::-webkit-scrollbar-thumb {
+		background: ${(p) => p.theme.edge};
+		border-radius: 6px;
+		border: 2px solid ${(p) => p.theme.paper};
+	}
+	&::-webkit-scrollbar-thumb:hover { background: ${(p) => p.theme.faint}; }
+	&::-webkit-scrollbar-corner { background: transparent; }
 `;
 
 /* The scroller's content: as wide as the widest row, but never narrower than the
@@ -52,8 +66,10 @@ export interface VirtualProps {
 	readonly onWindow?: (() => void) | undefined;
 	/** Lists up to this many rows are mounted whole (no windowing). Default 400. */
 	readonly fullMount?: number;
-	/** Max height of an uncapped pane (a CSS length). Default "74vh". */
+	/** Max height of an uncapped pane (a CSS length). Default "70vh". */
 	readonly maxHeight?: string;
+	/** The board has a fixed height: this pane fills it and scrolls inside it. */
+	readonly bounded?: boolean;
 }
 
 /**
@@ -69,7 +85,7 @@ interface Range {
 	readonly end: number;
 }
 
-export const Virtual = ({ count, rowHeight, overscan = 1, rubber = false, cap = false, renderRow, onWindow, fullMount = FULL_MOUNT, maxHeight = "74vh" }: VirtualProps): ReactElement => {
+export const Virtual = ({ count, rowHeight, overscan = 1, rubber = false, cap = false, renderRow, onWindow, fullMount = FULL_MOUNT, maxHeight = "70vh", bounded = false }: VirtualProps): ReactElement => {
 	const scroller = useRef<HTMLDivElement | null>(null);
 	// A first guess so the first paint is not empty; the layout effect corrects it
 	// before the browser shows anything.
@@ -118,7 +134,7 @@ export const Virtual = ({ count, rowHeight, overscan = 1, rubber = false, cap = 
 	for (let index = range.start; index < range.end; index += 1) rows.push(renderRow(index));
 
 	return (
-		<Scroller ref={scroller} $rubber={rubber} $cap={cap} $maxHeight={maxHeight}>
+		<Scroller ref={scroller} $rubber={rubber} $cap={cap} $maxHeight={maxHeight} $bounded={bounded}>
 			<Content $rubber={rubber}>
 				<Spacer style={{ height: range.start * rowHeight }} />
 				{rows}

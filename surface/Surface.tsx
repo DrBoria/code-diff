@@ -22,13 +22,18 @@ import { useSyncedScroll } from "./scroll.js";
  * per frame, and no node is ever created twice.
  */
 
-const Frame = styled.div<{ $template: string }>`
+const Frame = styled.div<{ $template: string; $height?: string | undefined }>`
 	position: relative;
 	display: grid;
 	grid-template-columns: ${(p) => p.$template};
-	align-items: start;
+	/* A bounded board constrains its single row to the board height, so every column
+	   scrolls INSIDE it instead of stretching the row to its content. Unbounded, the
+	   row is as tall as the tallest column. */
+	grid-template-rows: ${(p) => (p.$height === undefined ? "auto" : "minmax(0, 1fr)")};
+	align-items: ${(p) => (p.$height === undefined ? "start" : "stretch")};
 	width: 100%;
 	min-width: 0;
+	${(p) => (p.$height === undefined ? "" : `height: ${p.$height};`)}
 	overflow: hidden;
 	font-family: ${(p) => p.theme.mono};
 	font-size: 12px;
@@ -41,11 +46,14 @@ const Frame = styled.div<{ $template: string }>`
 // A capped column takes no part in sizing the row (`height: 0` contributes nothing)
 // and then grows back to the row it did not set — so its list scrolls inside the
 // board height the OTHER columns made.
-const Cell = styled.div<{ $cap: boolean }>`
+const Cell = styled.div<{ $cap: boolean; $bounded: boolean }>`
 	position: relative;
 	z-index: 2;
 	min-width: 0;
-	${(p) => (p.$cap ? "height: 0; min-height: 100%;" : "")}
+	/* Bounded: the cell fills the board's constrained row and never grows past it,
+	   so its pane scrolls inside the board instead of stretching the page. */
+	${(p) => (p.$bounded ? "height: 100%; min-height: 0; overflow: hidden;" : "")}
+	${(p) => (p.$cap && !p.$bounded ? "height: 0; min-height: 100%;" : "")}
 `;
 
 const Corridor = styled.div`
@@ -167,12 +175,21 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	const picked = controller?.picked !== undefined ? controller.picked : internalPicked;
 	const root = useRef<HTMLDivElement | null>(null);
 	const layer = useRef<SVGSVGElement | null>(null);
+	// Pointer moves are coalesced to at most one update per frame (see onPointerOver).
+	const lastPointerApply = useRef(0);
+	const pendingPointer = useRef<{ target: HTMLElement; x: number; y: number } | null>(null);
 	// Lane nodes, keyed by the CONNECTION's own index: a lane keeps its node for the
 	// whole life of the board, and a repaint only rewrites what it already owns.
 	const laneNodes = useRef(new Map<number, LaneNode>());
 	// The row wash, in its own layer: merged spans painted once per column and tone, so
 	// nested lanes cannot stack their transparency into a white rectangle.
 	const bandLayer = useRef<SVGGElement | null>(null);
+	// THE RIBBON GEOMETRY, CACHED. Measuring every lane and allocating its slot is the
+	// expensive part of a paint, and it does NOT depend on the pointer — only on the
+	// connections, the layout and the scroll. A hover changes the wash, not the roads,
+	// so the shapes are reused until one of those moves. This is what keeps a hover
+	// from re-measuring a hundred lanes on every pointer move.
+	const shapeCache = useRef<{ key: string; placed: ReturnType<typeof shapesOf> } | null>(null);
 
 	// The owner may switch the initial state while mounted (a "show all" chip).
 	useEffect(() => setRevealed(reveal), [reveal]);
@@ -470,15 +487,23 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		const rowsOfBlock = new Map<string, Map<string, string[]>>();
 		const parentsOfBlock = new Map<string, Set<string>>();
 		const toneOfBlock = new Map<string, string>();
+		// A CODE LINE may be named by several nested blocks (a component usage line is
+		// the anchor of its own subtree AND of every ancestor subtree). Index the blocks
+		// that name each code line, smallest first, so a hover resolves to the most
+		// specific one — the component's own subtree, not the whole page that contains it.
+		const byCodeLine = new Map<string, string[]>();
+		const sizeOf = new Map<string, number>();
 		for (const block of blocks) {
 			const perColumn = new Map<string, string[]>();
 			const parents = new Set<string>();
+			let size = 0;
 			const add = (end: { column: string; items: readonly (string | number)[] }, isParent: boolean) => {
 				const list = perColumn.get(end.column) ?? [];
 				for (const id of end.items) {
 					const key = `${end.column}\u0000${String(id)}`;
 					byRow.set(key, block.id);
 					list.push(String(id));
+					size += 1;
 					if (isParent) parents.add(key);
 				}
 				perColumn.set(end.column, list);
@@ -487,31 +512,94 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 			for (const end of block.members ?? []) add(end, false);
 			rowsOfBlock.set(block.id, perColumn);
 			parentsOfBlock.set(block.id, parents);
+			sizeOf.set(block.id, size);
 			if (block.tone !== undefined) toneOfBlock.set(block.id, block.tone);
-		}
-
-		return { byRow, rowsOfBlock, parentsOfBlock, toneOfBlock };
-	}, [blocks]);
-
-	// The block the pointer is on: a row names its block directly; a lane names it
-	// through any end that sits in a block. Null when the pointer is on no block.
-	const hoveredBlock = useMemo((): string | null => {
-		if (hover !== null) {
-			const direct = blockRows.byRow.get(`${hover.column}\u0000${hover.item}`);
-			if (direct !== undefined) return direct;
-		}
-		if (laneHover !== null) {
-			const lane = shown[laneHover];
-			for (const end of lane?.ends ?? []) {
-				for (const id of end.items) {
-					const found = blockRows.byRow.get(`${end.column}\u0000${String(id)}`);
-					if (found !== undefined) return found;
+			// Index by the code lines this block names (columns "0" and the last code
+			// column carry source lines; a snapshot row's `line` is its code line too).
+			for (const [column, ids] of perColumn) {
+				for (const id of ids) {
+					const line = lineMap.get(`${column}\u0000${id}`) ?? id;
+					const key = `${column}\u0000${line}`;
+					const list = byCodeLine.get(key) ?? [];
+					if (!list.includes(block.id)) list.push(block.id);
+					byCodeLine.set(key, list);
 				}
 			}
 		}
+		// Smallest block first: the most specific subtree owns the code line.
+		for (const list of byCodeLine.values()) list.sort((a, b) => (sizeOf.get(a) ?? 0) - (sizeOf.get(b) ?? 0));
 
-		return null;
-	}, [hover, laneHover, shown, blockRows]);
+		return { byRow, rowsOfBlock, parentsOfBlock, toneOfBlock, byCodeLine };
+	}, [blocks, lineMap]);
+
+	// The block the pointer is on, plus its ANCESTOR blocks (so every parent up the
+	// tree lights, not just the immediate group). A snapshot row names its block
+	// directly; a CODE LINE names several nested blocks and resolves to the smallest
+	// (the component's own subtree). Ancestors are the blocks that contain the hovered
+	// block's parent row — the chain of containers up to the root.
+	const hoveredBlocks = useMemo((): string[] => {
+		let found: string | null = null;
+		if (hover !== null) {
+			const direct = blockRows.byRow.get(`${hover.column}\u0000${hover.item}`);
+			if (direct !== undefined) found = direct;
+			else {
+				const line = lineOf(hover.column, hover.item);
+				const candidates = blockRows.byCodeLine.get(`${hover.column}\u0000${line}`);
+				if (candidates !== undefined && candidates.length > 0) found = candidates[0] ?? null;
+			}
+		}
+		if (found === null && laneHover !== null) {
+			const lane = shown[laneHover];
+			for (const end of lane?.ends ?? []) {
+				for (const id of end.items) {
+					const hit = blockRows.byRow.get(`${end.column}\u0000${String(id)}`);
+					if (hit !== undefined) {
+						found = hit;
+						break;
+					}
+				}
+				if (found !== null) break;
+			}
+		}
+		if (found === null) return [];
+		const primary: string = found;
+
+		// Walk up: a block is an ancestor of the primary if it names the primary's
+		// parent row (in any column) among its own rows. Collect the chain, choosing
+		// the SMALLEST containing block each step (the immediate parent, not the root).
+		const chain: string[] = [primary];
+		const seen = new Set<string>(chain);
+		let current: string = primary;
+		for (let guard = 0; guard < 64; guard += 1) {
+			const parents = blockRows.parentsOfBlock.get(current);
+			if (parents === undefined || parents.size === 0) break;
+			let next: string | null = null;
+			let nextSize = Infinity;
+			for (const [blockId, perColumn] of blockRows.rowsOfBlock) {
+				if (seen.has(blockId)) continue;
+				let contains = false;
+				for (const key of parents) {
+					const [column, id] = key.split("\u0000");
+					if (id !== undefined && (perColumn.get(column ?? "") ?? []).includes(id)) {
+						contains = true;
+						break;
+					}
+				}
+				if (!contains) continue;
+				const size = [...perColumn.values()].reduce((n, ids) => n + ids.length, 0);
+				if (size < nextSize) {
+					nextSize = size;
+					next = blockId;
+				}
+			}
+			if (next === null) break;
+			chain.push(next);
+			seen.add(next);
+			current = next;
+		}
+
+		return chain;
+	}, [hover, laneHover, shown, blockRows, lineMap]);
 
 	const paint = (): void => {
 		const svg = layer.current;
@@ -520,8 +608,18 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 
 		// id → anchor, because a lane names the item's id and the DOM carries its anchor.
 		const anchorOfId = (column: string, id: string): string => refs.get(`${column}\u0000${id}`) ?? id;
-		const lookup = layoutLookup(layout, readScrollTops(element), anchorOfId);
-		const placed = shapesOf(shown, ribbonColumns, lookup, toneOf);
+		const scrollTops = readScrollTops(element);
+		const lookup = layoutLookup(layout, scrollTops, anchorOfId);
+		// The geometry key: the connections, the measured layout and the scroll. A hover
+		// changes none of these, so the cached shapes are reused and only the wash repaints.
+		const geoKey = `${shown.length}:${shown.map((c) => c.id).join(",")}|${lastLayout.current}|${[...scrollTops.entries()].map(([id, top]) => `${id}:${top}`).join(",")}`;
+		let placed: ReturnType<typeof shapesOf>;
+		if (shapeCache.current !== null && shapeCache.current.key === geoKey) {
+			placed = shapeCache.current.placed;
+		} else {
+			placed = shapesOf(shown, ribbonColumns, lookup, toneOf);
+			shapeCache.current = { key: geoKey, placed };
+		}
 		const alive = new Set<number>();
 
 		// ── THE ROW WASH, ONCE ────────────────────────────────────────────────
@@ -579,18 +677,27 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		// LAST, so it lands on top: the pointed-at lane's rows in the stronger fill.
 		for (const { column, tone, spans } of hotSpansOf.values()) bandChildren.push(...bandPaths(column, spans, tones[tone]?.hot ?? tones[tone]?.fill ?? "transparent"));
 
-		// ── THE HOVERED BLOCK ─────────────────────────────────────────────────
+		// ── THE HOVERED BLOCKS ──────────────────────────────────────────────────
 		//
 		// A block is one unit (a header + its members). When the pointer is on any of
 		// its rows, the WHOLE block is washed in every column it names — the parent
-		// included — so the reader sees the group, not just the one row touched. The
-		// parent gets the stronger `hot` fill so the head of the block reads first.
-		if (hoveredBlock !== null) {
-			const perColumn = blockRows.rowsOfBlock.get(hoveredBlock);
-			const parents = blockRows.parentsOfBlock.get(hoveredBlock) ?? new Set<string>();
-			if (perColumn !== undefined) {
-				const blockTone = blockRows.toneOfBlock.get(hoveredBlock) ?? "same";
-				const fill = tones[blockTone]?.hot ?? tones[blockTone]?.fill ?? "transparent";
+		// included — AND every ancestor block up the tree, so the reader sees the
+		// component's whole subtree and the chain of containers it sits in. The
+		// primary (most specific) block is washed strongest; ancestors lighter; each
+		// block's parent header stronger than its members.
+		if (hoveredBlocks.length > 0) {
+			for (let depth = hoveredBlocks.length - 1; depth >= 0; depth -= 1) {
+				const blockId = hoveredBlocks[depth];
+				if (blockId === undefined) continue;
+				const perColumn = blockRows.rowsOfBlock.get(blockId);
+				const parents = blockRows.parentsOfBlock.get(blockId) ?? new Set<string>();
+				if (perColumn === undefined) continue;
+				const blockTone = blockRows.toneOfBlock.get(blockId) ?? "same";
+				// The primary block (depth 0) is the hot fill; ancestors fade toward the
+				// base fill so the pointed-at subtree reads first, its containers behind.
+				const isPrimary = depth === 0;
+				const memberFill = isPrimary ? (tones[blockTone]?.hot ?? tones[blockTone]?.fill ?? "transparent") : (tones[blockTone]?.fill ?? "transparent");
+				const parentFill = tones[blockTone]?.hot ?? tones[blockTone]?.fill ?? "transparent";
 				for (const [column, ids] of perColumn) {
 					const memberSpans: Span[] = [];
 					const parentSpans: Span[] = [];
@@ -601,10 +708,8 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 						if (parents.has(`${column}\u0000${id}`)) parentSpans.push(span);
 						else memberSpans.push(span);
 					}
-					bandChildren.push(...bandPaths(column, memberSpans, fill));
-					// The parent header is washed once more on top, so the head of the
-					// block reads stronger than its members.
-					bandChildren.push(...bandPaths(column, parentSpans, fill));
+					bandChildren.push(...bandPaths(column, memberSpans, memberFill));
+					bandChildren.push(...bandPaths(column, parentSpans, parentFill));
 				}
 			}
 		}
@@ -694,18 +799,21 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	// below the last row.
 	const sized = 0;
 
-	const onPointerOver = (event: ReactPointerEvent<HTMLDivElement>): void => {
-		const target = event.target as HTMLElement;
-		// A lane and its caption live in the layer: the board's row logic must not read
-		// them as "left every row".
+	// Pointer moves arrive faster than the screen refreshes; coalesce them into ONE
+	// state update per animation frame so a fast sweep does not re-render the board a
+	// hundred times a second. The latest event wins.
+	const applyPointer = (): void => {
+		const pending = pendingPointer.current;
+		if (pending === null) return;
+		const { target, x, y } = pending;
 		if (target.closest("svg") !== null) return;
 		// ENTERING A ROW ENDS THE LANE. A lane is cleared by `pointerleave` of the layer,
 		// and that never fires when the pointer jumps from a ribbon straight onto a row
 		// above it — so the lane named a moment ago stayed hot and every row hover was
 		// answered by that old lane. One answer at a time.
-		setLaneHover(null);
 		const cell = target.closest("[data-column]");
 		if (!(cell instanceof HTMLElement)) {
+			setLaneHover(null);
 			setHover(null);
 
 			return;
@@ -721,10 +829,20 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 				: anchor instanceof HTMLElement && anchor.dataset.anchor !== undefined
 					? idsByAnchor.get(`${column}\u0000${anchor.dataset.anchor}`)
 					: undefined;
-		const char = charAt(anchor instanceof HTMLElement ? anchor : null, event.clientX, event.clientY);
+		const char = charAt(anchor instanceof HTMLElement ? anchor : null, x, y);
 		const next = id === undefined ? null : char === undefined ? { column, item: id } : { column, item: id, char };
 		setLaneHover(null);
 		setHover((current) => (current?.column === next?.column && current?.item === next?.item && current?.char === next?.char ? current : next));
+	};
+	const onPointerOver = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		pendingPointer.current = { target: event.target as HTMLElement, x: event.clientX, y: event.clientY };
+		// Coalesce a fast sweep into at most one update per frame (~16ms). Time-based,
+		// not rAF-based, so a hover always lands even in a background tab where rAF is
+		// throttled or never fires. The first event of a burst applies immediately.
+		const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+		if (now - lastPointerApply.current < 16) return;
+		lastPointerApply.current = now;
+		applyPointer();
 	};
 
 	// A pick keeps exactly what the pointer showed. Clicking the same row again (or
@@ -797,6 +915,7 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 				ref={root}
 				style={sized > 0 ? { minHeight: `${Math.ceil(sized)}px` } : undefined}
 				$template={templateOf(columns, corridors, fit)}
+				$height={config.boardHeight}
 				onPointerOver={onPointerOver}
 				// The CHARACTER under the pointer moves with the pointer, and `pointerover` fires
 				// only when the row is entered: without this the piece would be the one the
@@ -819,7 +938,7 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 
 					return (
 						<Group key={column.id}>
-							<Cell data-column={column.id} $cap={column.cap === true}>
+							<Cell data-column={column.id} $cap={column.cap === true} $bounded={config.boardHeight !== undefined}>
 								<Render
 									column={column}
 									{...(render === undefined ? {} : { render })}

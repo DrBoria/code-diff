@@ -107,3 +107,25 @@ describe("blocks: whole-block hover", () => {
 		expect(b0?.parent.flatMap((e) => e.items)).toContain("h");
 	});
 });
+
+describe("scroll: bounded board + visible scrollbar", () => {
+	const columns = [blockColumn("left", Array.from({ length: 50 }, (_, i) => ({ id: String(i), text: `line ${i}` })))];
+
+	it("bounds the board to a fixed height when boardHeight is set", () => {
+		render(renderBoard({ columns, options: { foldUnconnected: false, boardHeight: "400px" } }));
+		const col = document.querySelector('[data-column="left"]') as HTMLElement;
+		// The grid frame is constrained to the board height.
+		let frame: HTMLElement | null = col;
+		while (frame && getComputedStyle(frame).display !== "grid") frame = frame.parentElement;
+		expect(frame).toBeTruthy();
+		expect(getComputedStyle(frame as HTMLElement).height).toBe("400px");
+	});
+
+	it("draws a visible (thin) scrollbar, never hidden", () => {
+		render(renderBoard({ columns, options: { foldUnconnected: false, boardHeight: "400px" } }));
+		const col = document.querySelector('[data-column="left"]') as HTMLElement;
+		const scroller = col.firstElementChild as HTMLElement;
+		expect(getComputedStyle(scroller).scrollbarWidth).toBe("thin");
+		expect(getComputedStyle(scroller).overflowY).toBe("auto");
+	});
+});

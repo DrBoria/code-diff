@@ -16,6 +16,13 @@ export interface ResolvedOptions {
 	readonly overscan: number;
 	readonly hubLanes: number;
 	readonly maxHeight: string;
+	/**
+	 * A fixed height for the whole board (a CSS length). When set, every column
+	 * scrolls inside it and the board never grows past it — so a long file stays
+	 * reachable in a bounded, scrollable region instead of stretching the page.
+	 * Absent = the board is as tall as its tallest column (capped by `maxHeight`).
+	 */
+	readonly boardHeight?: string;
 	readonly foldUnconnected: boolean;
 	readonly foldLabel?: (count: number) => string;
 }
@@ -28,7 +35,7 @@ export const DEFAULT_OPTIONS: ResolvedOptions = {
 	fullMount: 400,
 	overscan: 1,
 	hubLanes: 3,
-	maxHeight: "74vh",
+	maxHeight: "70vh",
 	foldUnconnected: true,
 };
 
