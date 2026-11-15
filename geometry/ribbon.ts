@@ -391,6 +391,22 @@ export const shapesOf = (
 	// must not push each other — a lane would move for no reason.
 	const taken = new Map<string, Slot[]>();
 
+	// THE BOARD'S OWN HEIGHT. A dip may move a flat middle DOWN, but never below the
+	// columns it joins: pushing lanes into the empty space under the code drew ribbons
+	// that hung off the bottom of the board ("ribbons dipping to a strange place").
+	// The ceiling is the lowest bottom edge of the columns this corridor touches.
+	const ceilingOf = (shape: LaneShape): number => {
+		let ceiling = Infinity;
+		for (const ribbon of shape.ribbons) {
+			for (const id of [ribbon.from, ribbon.to]) {
+				const box = columns.find((column) => column.id === id)?.box;
+				if (box != null) ceiling = Math.min(ceiling, box.bottom);
+			}
+		}
+
+		return ceiling;
+	};
+
 	// Row order, so a lane keeps its natural height whenever it can: the first lane over
 	// a row stays where it is and the later one moves.
 	const order = measured
@@ -404,7 +420,16 @@ export const shapesOf = (
 		const ribbon = entry.shape.ribbon;
 		if (corridor === null || ribbon === null) continue;
 		const slots = taken.get(corridor) ?? [];
-		const shift = freeShift({ top: ribbon.top, bottom: ribbon.bottom }, slots);
+		let shift = freeShift({ top: ribbon.top, bottom: ribbon.bottom }, slots);
+		// CONTAIN the dip: if the free slot would fall below the board, pull it back up
+		// to the last height that still fits. Two lanes may then share a plateau, which
+		// reads as one road — far better than a ribbon detached from its rows.
+		const ceiling = ceilingOf(entry.shape);
+		if (Number.isFinite(ceiling)) {
+			const height = ribbon.bottom - ribbon.top;
+			const maxShift = Math.max(0, ceiling - height - ribbon.top);
+			if (shift > maxShift) shift = maxShift;
+		}
 		if (shift > 0) {
 			// Re-measure with the dip: the same lane, the same bands, a free flat middle.
 			const moved = connectionShape(entry.connection, columns, lookup, shift, toneOf);

@@ -469,10 +469,10 @@ export interface ViewProps<Data = never> {
 	readonly tones?: Tones;
 	readonly theme: Theme;
 	/**
-	 * When true, hovering ANY piece of a lane lights the WHOLE path — every mark of
-	 * that lane in every column (code word → snapshot → match → snapshot → code word),
-	 * not just the hovered column. Used by multi-column snapshot boards where each row
-	 * belongs to exactly one correspondence, so visual tracking never breaks mid-path.
+	 * @deprecated Whole-path lighting is now the DEFAULT for every board: hovering any
+	 * piece of a lane lights every mark of that lane in every column (code word →
+	 * snapshot → match → snapshot → code word), so a correspondence never goes dark
+	 * mid-path. Kept for source compatibility; the value is ignored.
 	 */
 	readonly pathTracking?: boolean;
 	readonly renderers?: Partial<Renderers> | undefined;
@@ -558,8 +558,12 @@ export interface BoardController {
 	readonly onConnectionClick?: (connection: Connection) => void;
 	/** The view's focused chain changed (null = cleared). For a controlled `picked`. */
 	readonly onPick?: (ref: RowRef | null) => void;
-	/** The reader asked to reveal hidden rows board-wide. */
-	readonly onReveal?: () => void;
+	/**
+	 * The board's reveal state changed. `true` = every row shown, `false` = folded back
+	 * to the connected blocks. Fired by the fold button AND by a pick (which folds), so
+	 * an owner's "only blocks / show all" chip stays in sync with what the board shows.
+	 */
+	readonly onReveal?: (revealed: boolean) => void;
 	/** Controlled focus: when set, the view shows exactly this chain. */
 	readonly picked?: RowRef | null;
 }

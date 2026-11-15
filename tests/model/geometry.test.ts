@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectionShape, type AnchorLookup, type RibbonColumn } from "../../geometry/ribbon.js";
+import { connectionShape, shapesOf, type AnchorLookup, type RibbonColumn } from "../../geometry/ribbon.js";
 import type { Box, Connection } from "../../interface/types.js";
 
 // Geometry is domain-free and column-count-free. A connection names ids; this
@@ -71,5 +71,26 @@ describe("connectionShape ribbons", () => {
 		const lookup = lookupOf({ "0": { "1": 0 }, "1": { "1": 0 }, "2": { "1": 0 } });
 		const shape = connectionShape(conn([{ column: "0", items: ["1"] }, { column: "1", items: ["1"] }, { column: "2", items: ["1"] }]), three, lookup);
 		expect(shape?.ribbons.length).toBe(2);
+	});
+});
+
+describe("shapesOf dip containment", () => {
+	it("never pushes a ribbon below the board's columns", () => {
+		// A short board (bottom = 200) with many lanes over the same rows: the slot
+		// allocator would dip later lanes far down, but they must stay inside the board.
+		const short: RibbonColumn[] = [
+			{ id: "0", box: { top: 0, bottom: 200, left: 0, right: 100 } },
+			{ id: "1", box: { top: 0, bottom: 200, left: 200, right: 300 } },
+		];
+		const lookup = lookupOf({ "0": { "1": 0, "2": 1 }, "1": { "1": 0, "2": 1 } });
+		const conns: Connection[] = Array.from({ length: 12 }, (_, i) => ({
+			id: `c${i}`,
+			ends: [{ column: "0", items: ["1", "2"] }, { column: "1", items: ["1", "2"] }],
+		}));
+		const placed = shapesOf(conns, short, lookup);
+		for (const { shape } of placed) {
+			expect(shape.ribbon).not.toBeNull();
+			expect(shape.ribbon!.bottom).toBeLessThanOrEqual(200);
+		}
 	});
 });

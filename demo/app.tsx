@@ -122,7 +122,7 @@ const App = () => {
 						onRowClick: (e) => note(`row ${e.column}#${e.item}`),
 						onConnectionClick: (c) => note(`connection ${c.id} (${c.tone ?? "same"})`),
 						onPick: (e) => note(e === null ? "pick cleared" : `pick ${e.column}#${e.item}`),
-						onReveal: () => note("unfolded equal run"),
+						onReveal: (revealed) => note(revealed ? "unfolded equal run" : "folded back to blocks"),
 					}}
 				/>
 			</div>

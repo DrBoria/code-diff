@@ -154,7 +154,7 @@ interface LaneNode {
 	readonly caption: SVGTextElement;
 }
 
-export const Surface = <Data,>({ columns, connections = [], blocks = [], corridors = [], sync = [], reveal = false, tones = {}, renderers = {}, render, theme, onAction, fit, tokenize, options, controller, pathTracking = false }: ViewProps<Data>): ReactElement => {
+export const Surface = <Data,>({ columns, connections = [], blocks = [], corridors = [], sync = [], reveal = false, tones = {}, renderers = {}, render, theme, onAction, fit, tokenize, options, controller }: ViewProps<Data>): ReactElement => {
 	// The display knobs, resolved once: the owner's overrides on top of the defaults.
 	const config = useMemo(() => resolveOptions(options), [options]);
 	// THE LAYOUT, NOT THE SCROLL: measured boxes with the scroll taken out, so a
@@ -417,7 +417,6 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	// lane written", and the answer is every range the lane holds. Hovering a ROW asks
 	// "which range is THIS row", and answering with the whole lane's ranges lit the
 	// entire block under the pointer. A row hover lights only what sits on that row.
-	const fromRow = laneHover === null && hover !== null;
 	const highlights = new Map<string, Map<string, { from: number; to: number; strong: boolean; ink?: string }[]>>();
 	const addHighlight = (mark: { column: string; line: string; from: number; to: number; ink?: string }): void => {
 		const rows = highlights.get(mark.column) ?? new Map<string, { from: number; to: number; strong: boolean; ink?: string }[]>();
@@ -426,19 +425,14 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		rows.set(String(mark.line), list);
 		highlights.set(mark.column, rows);
 	};
+	// A LANE LIGHTS AS ONE WHOLE PATH. Wherever the pointer enters it — a code word, a
+	// middle summary row, the ribbon itself — EVERY range the lane holds in EVERY column
+	// lights, plus each range's twin. Narrowing the wash to the hovered row/column made
+	// the rest of the correspondence go dark mid-path ("pieces extinguish on hover") and
+	// left a middle-column hover lighting nothing at all. The lane is the unit; the
+	// pointer only chooses WHICH lane, never which fragment of it.
 	for (const index of focused) {
-		// PATH TRACKING: light every mark of the focused lane in every column, so the
-		// whole correspondence (code word → snapshot → match → snapshot → code word)
-		// stays visible. Without it, a row hover only lights the hovered column and the
-		// reader loses the thread mid-path.
-		const line = !pathTracking && fromRow && hover !== null ? lineOf(hover.column, hover.item) : null;
 		for (const mark of shown[index]?.marks ?? []) {
-			if (line !== null && (hover === null || mark.column !== hover.column || String(mark.line) !== line)) continue;
-			// The exact piece under the pointer: the same range the lane was narrowed to.
-			if (!pathTracking && piece !== null && (mark.from !== piece.from || mark.to !== piece.to)) continue;
-			// A character that sits on NO mark of the lane (`totalActions`, `cursor` in a
-			// property-assignment row) still belongs to this row's lane: the answer is every
-			// range the lane holds on this line, not silence.
 			addHighlight(mark);
 			// AND ITS DUPLICATE: the range this one was paired with on the other side. Hovering
 			// a name has to light the SAME name over there, not the row it sits in.
@@ -739,10 +733,12 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 				svg.append(group, caption);
 			}
 
-			// The lane's own ribbon keeps ONE copy: the pointed-at lane is already told
-			// apart by its rows (painted above in the `hot` fill) and by a small lift in
-			// brightness. Stacking copies of a 0.5 alpha fill was what turned a column white.
-			const fill = tones[shape.tone]?.fill ?? "transparent";
+		// The RIBBON is a road, not a wash: it takes the tone's `line` colour (a stronger
+		// stroke than the row band) so the path between columns is actually visible on a
+		// dark surface. Falling back to the band's whisper-alpha fill made every ribbon
+		// invisible — "where are all the ribbons?". The pointed-at lane lays the same road
+		// twice so alpha adds and the hue never moves.
+		const fill = tones[shape.tone]?.line ?? tones[shape.tone]?.fill ?? theme.ribbon ?? "transparent";
 			const isHot = hotIndices.has(index);
 			node.group.setAttribute("data-lane", shape.id);
 			node.group.setAttribute("data-hot", isHot ? "true" : "false");
@@ -848,11 +844,19 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	// A pick keeps exactly what the pointer showed. Clicking the same row again (or
 	// the fold button) lets everything back. The view reports the change out; when a
 	// controller owns `picked`, it drives the state back through the prop.
+	// REVEAL IS REPORTED, not private. The owner's "only blocks / show all" chip and the
+	// board's fold button are the SAME state: every internal change is pushed out through
+	// `onReveal(next)` so the chip never disagrees with what the board shows.
+	const changeRevealed = (next: boolean): void => {
+		setRevealed(next);
+		controller?.onReveal?.(next);
+	};
+
 	const pick = (next: { column: string; item: string }): void => {
 		if (chainOf(next).size === 0) return;
 		const cleared = picked?.column === next.column && picked?.item === next.item;
 		const value = cleared ? null : next;
-		setRevealed(false);
+		changeRevealed(false);
 		setPicked(value);
 		controller?.onPick?.(value);
 	};
@@ -949,9 +953,8 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 									{...(highlights.has(column.id) ? { highlight: highlights.get(column.id) } : {})}
 									onReveal={() => {
 										setPicked(null);
-										setRevealed(true);
-										controller?.onPick?.(null);
-										controller?.onReveal?.();
+									changeRevealed(true);
+									controller?.onPick?.(null);
 									}}
 									{...(fit === undefined ? {} : { fit })}
 									{...(tokenize === undefined ? {} : { tokenize })}
