@@ -3,92 +3,59 @@ import React, { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import { renderBoard, codeColumn } from "./helpers.js";
-import type { Connection } from "../../interface/types.js";
+import type { BoardAction, Ribbon } from "../../index.js";
 
-// A 3-way merge is just three columns + connections. code-diff performs NO merge:
-// an external controller receives the clicks and decides apply-left / apply-right
-// / apply-both. These prove the view reports enough for a controller to act, and
-// that the same component renders a git tree comparison via a custom renderer.
+// A 3-way merge is three columns + ribbons + connector actions. The board reports
+// the action; an external controller (here a useState) performs the merge and the
+// result column genuinely re-renders. This proves the generic merge workflow.
 
-const hunk = (id: string): Connection => ({
+const hunk = (id: string): Ribbon => ({
 	id,
-	tone: "differs",
+	tone: "changed",
 	ends: [
-		{ column: "left", items: ["1"] },
-		{ column: "merge", items: ["1"] },
-		{ column: "right", items: ["1"] },
+		{ column: "left", rows: ["1"] },
+		{ column: "result", rows: ["1"] },
+		{ column: "right", rows: ["1"] },
 	],
 });
 
-// A controller that records which side was applied for a hunk. The view only
-// reports the connection click; the controller owns the merge decision.
-const MergeController = ({ onApply }: { onApply: (hunk: string, side: "left" | "right" | "both") => void }) => {
-	const [connections] = useState<Connection[]>([hunk("h1")]);
+const MergeController = ({ onApply }: { onApply: (hunk: string, side: "left" | "right") => void }) => {
+	const [result, setResult] = useState("base");
+	const actions: BoardAction[] = [
+		{ id: "apply-left", label: "Apply left", entity: "ribbon", placement: "connector", onClick: (p) => { if (p.ribbon) { onApply(p.ribbon.id, "left"); setResult("left-value"); } } },
+		{ id: "apply-right", label: "Apply right", entity: "ribbon", placement: "connector", onClick: (p) => { if (p.ribbon) { onApply(p.ribbon.id, "right"); setResult("right-value"); } } },
+	];
 	return renderBoard({
-		columns: [codeColumn("left", ["a"]), codeColumn("merge", ["a"]), codeColumn("right", ["b"])],
-		connections,
-		controller: {
-			onConnectionClick: (c) => onApply(c.id, "both"),
-			onRowClick: (ref) => {
-				if (ref.column === "left") onApply("h1", "left");
-				if (ref.column === "right") onApply("h1", "right");
-			},
-		},
+		columns: [codeColumn("left", ["left-value"]), codeColumn("result", [result]), codeColumn("right", ["right-value"])],
+		ribbons: [hunk("h1")],
+		actions,
+		corridors: [60, 60],
 	});
 };
 
-describe("3-way merge via an external controller", () => {
-	it("renders left / merge / right columns", () => {
+describe("3-way merge via connector actions + external state", () => {
+	it("renders left / result / right columns", () => {
 		render(<MergeController onApply={() => {}} />);
 		expect(document.querySelectorAll("[data-column]").length).toBe(3);
-		expect(document.querySelector('[data-column="merge"]')).toBeTruthy();
+		expect(document.querySelector('[data-column="result"]')).toBeTruthy();
 	});
 
-	it("apply-left: clicking the left row reports the left side", () => {
+	it("apply-left mutates the result column (real re-render)", () => {
 		const onApply = vi.fn();
 		render(<MergeController onApply={onApply} />);
-		fireEvent.click(document.querySelector('[data-column="left"] [data-item="1"]') as Element);
+		const resultBefore = document.querySelector('[data-column="result"] [data-item="1"]')?.textContent;
+		expect(resultBefore).toContain("base");
+		fireEvent.click(document.querySelector('[data-action="apply-left"]') as Element);
 		expect(onApply).toHaveBeenCalledWith("h1", "left");
+		const resultAfter = document.querySelector('[data-column="result"] [data-item="1"]')?.textContent;
+		expect(resultAfter).toContain("left-value");
 	});
 
-	it("apply-right: clicking the right row reports the right side", () => {
+	it("apply-right mutates the result column", () => {
 		const onApply = vi.fn();
 		render(<MergeController onApply={onApply} />);
-		fireEvent.click(document.querySelector('[data-column="right"] [data-item="1"]') as Element);
+		fireEvent.click(document.querySelector('[data-action="apply-right"]') as Element);
 		expect(onApply).toHaveBeenCalledWith("h1", "right");
-	});
-
-	it("apply-both: clicking the hunk ribbon reports the whole connection", () => {
-		const onApply = vi.fn();
-		render(<MergeController onApply={onApply} />);
-		const lane = document.querySelector("[data-lane]");
-		expect(lane).toBeTruthy();
-		fireEvent.click(lane as Element);
-		expect(onApply).toHaveBeenCalledWith("h1", "both");
-	});
-});
-
-describe("git tree comparison via a custom renderer", () => {
-	it("renders non-code columns (file trees) with a custom kind", () => {
-		const Tree = ({ column }: { column: { id: string; items?: readonly { id: string; text?: string }[] } }) => (
-			<div data-column={column.id}>
-				{(column.items ?? []).map((it) => (
-					<div key={it.id} data-item={it.id} data-anchor={it.id}>
-						{it.text}
-					</div>
-				))}
-			</div>
-		);
-		render(
-			renderBoard({
-				columns: [
-					{ id: "tree-a", kind: "tree", items: [{ id: "src/x.ts", text: "src/x.ts" }] },
-					{ id: "tree-b", kind: "tree", items: [{ id: "src/y.ts", text: "src/y.ts" }] },
-				],
-				renderers: { tree: Tree as never },
-			}),
-		);
-		expect(document.querySelector('[data-column="tree-a"]')).toBeTruthy();
-		expect(document.querySelector('[data-column="tree-b"]')).toBeTruthy();
+		expect(document.querySelector('[data-column="result"] [data-item="1"]')?.textContent).toContain("right-value");
 	});
 });

@@ -1,42 +1,28 @@
-// ── BOARD CONFIG ───────────────────────────────────────────────────────────
-//
-// The display knobs, with their defaults in ONE place. The owner overrides any of
-// them through `ViewProps.options`; nothing here is a closed constant the owner
-// cannot reach. `resolveOptions` fills the gaps so every consumer reads a complete
-// set without each re-declaring the defaults.
+import type { BoardConfig, ResolvedConfig } from "./board/board-types.js";
 
-import type { BoardOptions } from "./interface/types.js";
+/**
+ * ── CONFIG ─────────────────────────────────────────────────────────────────
+ *
+ * ONE place that parses the owner's config into a complete, resolved set. Every
+ * feature reads its knobs from here (via context), and the ribbon receives its
+ * paint colours from the resolved theme — never from a private constant.
+ */
 
-export interface ResolvedOptions {
-	readonly rowHeight: number;
-	readonly bandGap: number;
-	readonly diffContext: number;
-	readonly maxWordTokens: number;
-	readonly fullMount: number;
-	readonly overscan: number;
-	readonly hubLanes: number;
-	readonly maxHeight: string;
-	/**
-	 * A fixed height for the whole board (a CSS length). When set, every column
-	 * scrolls inside it and the board never grows past it — so a long file stays
-	 * reachable in a bounded, scrollable region instead of stretching the page.
-	 * Absent = the board is as tall as its tallest column (capped by `maxHeight`).
-	 */
-	readonly boardHeight?: string;
-	readonly foldUnconnected: boolean;
-	readonly foldLabel?: (count: number) => string;
-}
-
-export const DEFAULT_OPTIONS: ResolvedOptions = {
+export const DEFAULT_CONFIG: ResolvedConfig = {
 	rowHeight: 18,
 	bandGap: 1,
 	diffContext: 3,
 	maxWordTokens: 400,
 	fullMount: 400,
 	overscan: 1,
-	hubLanes: 3,
 	maxHeight: "70vh",
 	foldUnconnected: true,
+	ribbonHeight: 1,
+	foldLabel: (count) => `⋯ ${count} line${count === 1 ? "" : "s"} hidden — click to show`,
 };
 
-export const resolveOptions = (options?: BoardOptions): ResolvedOptions => ({ ...DEFAULT_OPTIONS, ...(options ?? {}) });
+export const resolveConfig = (config?: BoardConfig): ResolvedConfig => ({
+	...DEFAULT_CONFIG,
+	...(config ?? {}),
+	foldLabel: config?.foldLabel ?? DEFAULT_CONFIG.foldLabel,
+});

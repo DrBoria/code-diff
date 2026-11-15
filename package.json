@@ -1,6 +1,6 @@
 {
   "name": "@md-code/code-diff",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Generic N-column code diff view: any column kinds, any-to-any links, dynamic one-to-many ribbons.",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,13 +15,12 @@
       "default": "./dist/view.js"
     },
     "./interface": {
-      "types": "./dist/interface/types.d.ts",
-      "default": "./dist/interface/types.js"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     }
   },
   "files": [
     "dist",
-    "interface",
     "README.md",
     "LICENSE"
   ],

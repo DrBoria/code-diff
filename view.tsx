@@ -1,15 +1,14 @@
 import type { ReactElement } from "react";
-import type { Renderers, ViewProps } from "./interface/types.js";
-import { Surface } from "./surface/Surface.js";
-import { Graph, Items } from "./columns/Items.js";
+import { Board } from "./board/Board.js";
+import type { BoardProps } from "./board/board-types.js";
 
-/** The React entry point: the built-in renderers, overridable by the owner. */
-const builtin: Renderers = { items: Items, graph: Graph };
+/**
+ * The React entry point. `CodeDiff` is the generic N-column board: columns of
+ * rows, ribbons between them, one actions array, one events map, one theme.
+ */
+export const CodeDiff = (props: BoardProps): ReactElement => <Board {...props} />;
 
-export const CodeDiff = <Data,>(props: ViewProps<Data>): ReactElement => (
-	<Surface {...props} renderers={{ ...builtin, ...(props.renderers ?? {}) }} />
-);
-
-export { Surface, Items, Graph };
-export { buildConnections, type RowLink, type BandCaption } from "./connections/group.js";
+export { Board };
+export { Actions } from "./components/Actions.js";
+export { Chip, Toolbar, Legend, Typography } from "./components/atoms.js";
 export default CodeDiff;
