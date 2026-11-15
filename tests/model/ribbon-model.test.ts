@@ -27,7 +27,7 @@ describe("rangeOf / locate", () => {
 
 	it("locates the row a name is declared on", () => {
 		const rows = rowsOf(["interface A {", "  id: string;", "}"], ["interface B {", "  id: string;", "}"]);
-		expect(locate(rows, 0, "id")?.line).toBe("2");
+		expect(locate({ rows, column: 0, name: "id" })?.line).toBe("2");
 	});
 });
 

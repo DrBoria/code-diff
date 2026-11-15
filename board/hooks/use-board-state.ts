@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import type { BoardState } from "../board-types.js";
-import { initialState } from "../board-types.js";
+import { initialState, type BoardState } from "../board-types.js";
 import type { RowRef } from "../../rows/row-types.js";
 import type { Emitter } from "../events.js";
 

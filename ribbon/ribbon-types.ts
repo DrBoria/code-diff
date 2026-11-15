@@ -53,9 +53,9 @@ export interface RibbonConnector {
 	readonly cy: number;
 }
 
-/** A measured ribbon: bands per column + connectors + caption. Internal shape. */
-export interface MeasuredRibbon {
-	readonly id: string;
+/** A measured ribbon: the ribbon's own identity (id/tone/label) plus what
+ *  measuring adds — bands per column, connectors, caption, corridor box. */
+export interface MeasuredRibbon extends Pick<Ribbon, "id"> {
 	readonly tone: string;
 	readonly label: string | null;
 	readonly bands: readonly { column: string; top: number; bottom: number; tone?: string }[];

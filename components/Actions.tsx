@@ -1,8 +1,6 @@
 import { type ReactElement } from "react";
 import styled from "styled-components";
-import type { BoardAction, ActionEntity, ActionPlacement, ActionParams } from "./actions-types.js";
-import { useActions } from "./hooks/use-actions.js";
-import type { Emitter } from "../board/events.js";
+import { useActions, type ActionsArgs } from "./hooks/use-actions.js";
 
 /**
  * ONE action renderer for every entity. Two variants:
@@ -45,16 +43,11 @@ const TextButton = styled.button<{ $hover: boolean }>`
 	&:disabled { opacity: 0.3; cursor: default; }
 `;
 
-export interface ActionsProps {
-	readonly actions: readonly BoardAction[];
-	readonly entity: ActionEntity;
-	readonly placement: ActionPlacement | readonly ActionPlacement[];
-	readonly params: Omit<ActionParams, "entity">;
-	readonly emit: Emitter["emit"];
-}
+/** The renderer takes exactly the hook's contract — no second shape. */
+export type ActionsProps = ActionsArgs;
 
 export const Actions = ({ actions, entity, placement, params, emit }: ActionsProps): ReactElement | null => {
-	const { visible, run, isDisabled } = useActions(actions, entity, placement, params, emit);
+	const { visible, run, isDisabled } = useActions({ actions, entity, placement, params, emit });
 	if (visible.length === 0) return null;
 	return (
 		<>

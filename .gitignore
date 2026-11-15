@@ -2,3 +2,4 @@ node_modules/
 *.log
 dist/
 demo/app.js
+reports/

@@ -5,6 +5,7 @@
  * over tokens so only the differing identifier is marked. A row holds one cell
  * per column — never left/right. Long equal runs are folded with context kept.
  */
+import { lcsOps, type Op } from "./diff-lcs.js";
 
 export const ROW = { Equal: "equal", Change: "change", Add: "add", Remove: "remove", Fold: "fold" } as const;
 export type RowType = (typeof ROW)[keyof typeof ROW];
@@ -36,56 +37,38 @@ export interface DiffOptions {
 
 const splitTokens = (text: string): string[] => String(text ?? "").match(WORD_TOKEN_RE) ?? [];
 
-interface Op {
-	readonly type: "equal" | "add" | "remove";
-	readonly a?: number;
-	readonly b?: number;
+/** Merge adjacent word runs of the same changed state. */
+const pushRun = (out: Word[], text: string, changed: boolean): void => {
+	const last = out[out.length - 1];
+	if (last && last.changed === changed) out[out.length - 1] = { text: last.text + text, changed };
+	else out.push({ text, changed });
+};
+
+/** The two token sequences and the run lists an op feeds. */
+interface WordDiff {
+	readonly a: readonly string[];
+	readonly b: readonly string[];
+	readonly first: Word[];
+	readonly second: Word[];
 }
 
-const lcsOps = (a: readonly string[], b: readonly string[]): Op[] => {
-	const rows = a.length + 1;
-	const cols = b.length + 1;
-	const table = new Uint16Array(rows * cols);
-	for (let i = 1; i < rows; i += 1)
-		for (let j = 1; j < cols; j += 1)
-			table[i * cols + j] = a[i - 1] === b[j - 1] ? (table[(i - 1) * cols + (j - 1)] ?? 0) + 1 : Math.max(table[(i - 1) * cols + j] ?? 0, table[i * cols + (j - 1)] ?? 0);
-	const ops: Op[] = [];
-	let i = a.length;
-	let j = b.length;
-	while (i > 0 || j > 0) {
-		if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
-			ops.push({ type: "equal", a: i - 1, b: j - 1 });
-			i -= 1;
-			j -= 1;
-		} else if (j > 0 && (i === 0 || (table[i * cols + (j - 1)] ?? 0) >= (table[(i - 1) * cols + j] ?? 0))) {
-			ops.push({ type: "add", b: j - 1 });
-			j -= 1;
-		} else {
-			ops.push({ type: "remove", a: i - 1 });
-			i -= 1;
-		}
-	}
-	return ops.reverse();
+/** One word-diff op applied to both run lists. */
+const applyWordOp = (op: Op, { a, b, first, second }: WordDiff): void => {
+	const equal = op.type === "equal";
+	if (op.type !== "add") pushRun(first, a[op.a ?? 0] ?? "", !equal);
+	if (op.type !== "remove") pushRun(second, b[op.b ?? 0] ?? "", !equal);
 };
+
+/** Over the token budget the whole line is one changed run on each side. */
+const wholeRuns = (first: string, second: string): readonly [readonly Word[], readonly Word[]] => [[{ text: String(first ?? ""), changed: true }], [{ text: String(second ?? ""), changed: true }]];
 
 export const diffWords = (first: string, second: string, maxWordTokens: number = DIFF.MaxWordTokens): readonly [readonly Word[], readonly Word[]] => {
 	const a = splitTokens(first);
 	const b = splitTokens(second);
-	if (a.length > maxWordTokens || b.length > maxWordTokens) return [[{ text: String(first ?? ""), changed: true }], [{ text: String(second ?? ""), changed: true }]];
-	const push = (out: Word[], text: string, changed: boolean): void => {
-		const last = out[out.length - 1];
-		if (last && last.changed === changed) out[out.length - 1] = { text: last.text + text, changed };
-		else out.push({ text, changed });
-	};
+	if (Math.max(a.length, b.length) > maxWordTokens) return wholeRuns(first, second);
 	const firstRuns: Word[] = [];
 	const secondRuns: Word[] = [];
-	for (const op of lcsOps(a, b)) {
-		if (op.type === "equal") {
-			push(firstRuns, a[op.a ?? 0] ?? "", false);
-			push(secondRuns, b[op.b ?? 0] ?? "", false);
-		} else if (op.type === "remove") push(firstRuns, a[op.a ?? 0] ?? "", true);
-		else push(secondRuns, b[op.b ?? 0] ?? "", true);
-	}
+	for (const op of lcsOps(a, b)) applyWordOp(op, { a, b, first: firstRuns, second: secondRuns });
 	return [firstRuns, secondRuns];
 };
 
@@ -104,36 +87,80 @@ const buildRow = (type: RowType, cells: [LineCell | null, LineCell | null], maxW
 	return { type, cells: [cellOf(first.no, null, a), cellOf(second.no, null, b)] };
 };
 
-const toRows = (ops: readonly Op[], a: readonly string[], b: readonly string[], startA: number, startB: number, maxWordTokens: number): LineRow[] => {
+/** The two texts a row addresses, with their line-number offsets. */
+interface RowSource {
+	readonly a: readonly string[];
+	readonly b: readonly string[];
+	readonly startA: number;
+	readonly startB: number;
+	readonly maxWordTokens: number;
+}
+
+const equalRow = (op: Op, src: RowSource): LineRow =>
+	buildRow(ROW.Equal, [cellOf((op.a ?? 0) + src.startA, src.a[op.a ?? 0] ?? ""), cellOf((op.b ?? 0) + src.startB, src.b[op.b ?? 0] ?? "")], src.maxWordTokens);
+
+/** Paired remove+add rows are changes. */
+const changedRows = (removes: readonly Op[], adds: readonly Op[], src: RowSource): LineRow[] => {
+	const rows: LineRow[] = [];
+	for (let n = 0; n < Math.min(removes.length, adds.length); n += 1) {
+		const ra = removes[n]?.a ?? 0;
+		const ab = adds[n]?.b ?? 0;
+		rows.push(buildRow(ROW.Change, [cellOf(ra + src.startA, src.a[ra] ?? ""), cellOf(ab + src.startB, src.b[ab] ?? "")], src.maxWordTokens));
+	}
+	return rows;
+};
+
+/** The one-sided tail of a change run: extra removes, then extra adds. */
+const oneSidedRows = (removes: readonly Op[], adds: readonly Op[], src: RowSource): LineRow[] => {
+	const rows: LineRow[] = [];
+	const paired = Math.min(removes.length, adds.length);
+	for (let n = paired; n < removes.length; n += 1) {
+		const ra = removes[n]?.a ?? 0;
+		rows.push(buildRow(ROW.Remove, [cellOf(ra + src.startA, src.a[ra] ?? ""), null], src.maxWordTokens));
+	}
+	for (let n = paired; n < adds.length; n += 1) {
+		const ab = adds[n]?.b ?? 0;
+		rows.push(buildRow(ROW.Add, [null, cellOf(ab + src.startB, src.b[ab] ?? "")], src.maxWordTokens));
+	}
+	return rows;
+};
+
+/** Collect the consecutive ops of one type starting at k; returns the new k. */
+const takeRun = (ops: readonly Op[], k: number, type: Op["type"]): { run: Op[]; next: number } => {
+	const run: Op[] = [];
+	let at = k;
+	while (at < ops.length) {
+		const op = ops[at];
+		if (op === undefined || op.type !== type) break;
+		run.push(op);
+		at += 1;
+	}
+	return { run, next: at };
+};
+
+const toRows = (ops: readonly Op[], src: RowSource): LineRow[] => {
 	const rows: LineRow[] = [];
 	let k = 0;
 	while (k < ops.length) {
-		const op = ops[k] ?? { type: "equal" };
+		const op = ops[k];
+		if (op === undefined) break;
 		if (op.type === "equal") {
-			rows.push(buildRow(ROW.Equal, [cellOf((op.a ?? 0) + startA, a[op.a ?? 0] ?? ""), cellOf((op.b ?? 0) + startB, b[op.b ?? 0] ?? "")], maxWordTokens));
+			rows.push(equalRow(op, src));
 			k += 1;
 			continue;
 		}
-		const removes: Op[] = [];
-		const adds: Op[] = [];
-		while (k < ops.length && ops[k]?.type === "remove") removes.push(ops[k++] as Op);
-		while (k < ops.length && ops[k]?.type === "add") adds.push(ops[k++] as Op);
-		const paired = Math.min(removes.length, adds.length);
-		for (let n = 0; n < paired; n += 1) {
-			const ra = removes[n]?.a ?? 0;
-			const ab = adds[n]?.b ?? 0;
-			rows.push(buildRow(ROW.Change, [cellOf(ra + startA, a[ra] ?? ""), cellOf(ab + startB, b[ab] ?? "")], maxWordTokens));
-		}
-		for (let n = paired; n < removes.length; n += 1) {
-			const ra = removes[n]?.a ?? 0;
-			rows.push(buildRow(ROW.Remove, [cellOf(ra + startA, a[ra] ?? ""), null], maxWordTokens));
-		}
-		for (let n = paired; n < adds.length; n += 1) {
-			const ab = adds[n]?.b ?? 0;
-			rows.push(buildRow(ROW.Add, [null, cellOf(ab + startB, b[ab] ?? "")], maxWordTokens));
-		}
+		const removes = takeRun(ops, k, "remove");
+		const adds = takeRun(ops, removes.next, "add");
+		rows.push(...changedRows(removes.run, adds.run, src), ...oneSidedRows(removes.run, adds.run, src));
+		k = adds.next;
 	}
 	return rows;
+};
+
+/** One equal run: kept whole when short, else context + a fold + context. */
+const foldRun = (run: readonly LineRow[], context: number): LineRow[] => {
+	if (run.length <= context * 2 + 1) return [...run];
+	return [...run.slice(0, context), { type: ROW.Fold, cells: [], rows: run.slice(context, run.length - context) }, ...run.slice(run.length - context)];
 };
 
 const foldEqualRuns = (rows: readonly LineRow[], context: number): LineRow[] => {
@@ -148,25 +175,20 @@ const foldEqualRuns = (rows: readonly LineRow[], context: number): LineRow[] => 
 		}
 		let end = k;
 		while (end < rows.length && rows[end]?.type === ROW.Equal) end += 1;
-		const run = rows.slice(k, end);
-		if (run.length <= context * 2 + 1) out.push(...run);
-		else {
-			out.push(...run.slice(0, context));
-			out.push({ type: ROW.Fold, cells: [], rows: run.slice(context, run.length - context) });
-			out.push(...run.slice(run.length - context));
-		}
+		out.push(...foldRun(rows.slice(k, end), context));
 		k = end;
 	}
 	return out;
 };
 
 const countRows = (rows: readonly LineRow[]): Record<RowType, number> => {
-	const counts = { [ROW.Equal]: 0, [ROW.Change]: 0, [ROW.Add]: 0, [ROW.Remove]: 0, [ROW.Fold]: 0 } as Record<RowType, number>;
+	const counts: Record<RowType, number> = { equal: 0, change: 0, add: 0, remove: 0, fold: 0 };
 	for (const row of rows) counts[row.type] = (counts[row.type] ?? 0) + 1;
 	return counts;
 };
 
 export const diffLines = (first: Span, second: Span, options: DiffOptions = {}): { rows: readonly LineRow[]; counts: Record<RowType, number> } => {
-	const rows = toRows(lcsOps(first.lines, second.lines), first.lines, second.lines, first.startLine, second.startLine, options.maxWordTokens ?? DIFF.MaxWordTokens);
+	const src: RowSource = { a: first.lines, b: second.lines, startA: first.startLine, startB: second.startLine, maxWordTokens: options.maxWordTokens ?? DIFF.MaxWordTokens };
+	const rows = toRows(lcsOps(first.lines, second.lines), src);
 	return { rows: foldEqualRuns(rows, options.context ?? DIFF.Context), counts: countRows(rows) };
 };

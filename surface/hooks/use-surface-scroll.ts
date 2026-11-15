@@ -1,24 +1,12 @@
 import { useLayoutEffect, type RefObject } from "react";
 import type { SyncGroup } from "../../columns/column-types.js";
+import { wireSync } from "../sync-scroll.js";
 
 /**
  * Scroll behaviour of the backdrop: repaint on scroll (no re-measure), and tie
- * explicit groups of columns together per requested axis.
+ * explicit groups of columns together per requested axis (sync-scroll wires
+ * them; this hook only owns the lifecycle).
  */
-
-const paneOf = (root: HTMLElement, id: string): HTMLElement | null => {
-	const cell = root.querySelector(`[data-column="${CSS.escape(id)}"]`);
-	const pane = cell?.firstElementChild;
-	return pane instanceof HTMLElement ? pane : null;
-};
-
-const axesOf = (group: SyncGroup): ("scrollTop" | "scrollLeft")[] => {
-	const axis = group.axis ?? "xy";
-	const axes: ("scrollTop" | "scrollLeft")[] = [];
-	if (axis.includes("y")) axes.push("scrollTop");
-	if (axis.includes("x")) axes.push("scrollLeft");
-	return axes;
-};
 
 /** Repaint callback on any pane scroll, coalesced to one per frame. */
 export const useScrollRepaint = (root: RefObject<HTMLDivElement | null>, repaint: () => void): void => {
@@ -45,27 +33,7 @@ export const useScrollRepaint = (root: RefObject<HTMLDivElement | null>, repaint
 export const useSyncedScroll = (root: RefObject<HTMLDivElement | null>, sync: readonly SyncGroup[]): void => {
 	useLayoutEffect(() => {
 		const element = root.current;
-		if (!element) return undefined;
-		const offs: (() => void)[] = [];
-		for (const group of sync) {
-			const panes = group.columns.map((id) => paneOf(element, id)).filter((pane): pane is HTMLElement => pane !== null);
-			if (panes.length < 2) continue;
-			for (const axis of axesOf(group)) {
-				let busy = false;
-				for (const pane of panes) {
-					const handler = (): void => {
-						if (busy) return;
-						busy = true;
-						for (const other of panes) if (other !== pane) other[axis] = pane[axis];
-						requestAnimationFrame(() => {
-							busy = false;
-						});
-					};
-					pane.addEventListener("scroll", handler);
-					offs.push(() => pane.removeEventListener("scroll", handler));
-				}
-			}
-		}
-		return () => offs.forEach((off) => off());
+		if (element === null) return undefined;
+		return wireSync(element, sync);
 	}, [root, sync]);
 };

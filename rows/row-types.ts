@@ -22,14 +22,13 @@ export interface Token {
 	readonly ink?: string;
 }
 
-/** A piece of a row's text that may be highlighted on its own. */
-export interface RowTextSpan {
-	readonly text: string;
+/** A piece of a row's text that may be highlighted on its own: a token plus
+ *  the two ways the board can paint it. */
+export interface RowTextSpan extends Token {
 	/** Paint it as a shared/duplicate range. */
 	readonly paint?: boolean;
 	/** Painted as the FOCUSED occurrence of a ribbon under the pointer. */
 	readonly strong?: boolean;
-	readonly ink?: string;
 }
 
 /** A character range inside a row's text that must be painted. */
@@ -84,7 +83,7 @@ export interface Row {
 	/** The ids this folded run hides (so a ribbon can route to it). */
 	readonly hiddenIds?: readonly RowId[];
 	/** Opaque owner data. */
-	readonly data?: unknown;
+	readonly data?: never;
 }
 
 /** The DOM box a row occupies, in content coordinates. */

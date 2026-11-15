@@ -1,8 +1,7 @@
 import { type ReactElement, type ReactNode } from "react";
 import styled from "styled-components";
-import type { Row as RowModel, Counter, ExplanationNote } from "./row-types.js";
+import type { Row as RowModel, Counter, RowTextSpan } from "./row-types.js";
 import { RowText } from "./RowText.js";
-import type { RowTextSpan } from "./row-types.js";
 
 /**
  * The dumb row: number plate + text + counters + explanation + action slots.
@@ -136,7 +135,7 @@ export const Row = ({ row, spans, paint, explanationInk, mirrored, rubber, rowHe
 				</Text>
 			</Line>
 		)}
-		{row.explanation === undefined ? null : <Explanation {...(explanationInk === undefined ? {} : { $ink: explanationInk })}>{(row.explanation as ExplanationNote).text}</Explanation>}
+		{row.explanation === undefined ? null : <Explanation {...(explanationInk === undefined ? {} : { $ink: explanationInk })}>{row.explanation.text}</Explanation>}
 		{insideActions !== undefined ? <InsideEnd>{insideActions}</InsideEnd> : null}
 	</Entry>
 );

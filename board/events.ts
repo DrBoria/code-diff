@@ -91,13 +91,23 @@ export interface Emitter {
 	emit<K extends EventName>(name: K, params: EventMap[K]): BoardEvent;
 }
 
+/** One subscription, widened for dispatch: the map guarantees K's params fit. */
+type AnyHandler = (params: EventMap[EventName], event: BoardEvent) => void;
+
+/** The handlers registered for one event, as a plain array. */
+const handlersFor = (events: Events | undefined, name: EventName): readonly AnyHandler[] => {
+	const entry: Events[EventName] = events?.[name];
+	if (entry === undefined) return [];
+	const list: readonly EventHandler<EventName>[] = Array.isArray(entry) ? entry : [entry];
+	return list;
+};
+
 export const makeEmitter = (events: Events | undefined): Emitter => ({
 	emit<K extends EventName>(name: K, params: EventMap[K]): BoardEvent {
-		const event = makeEvent();
-		const entry = events?.[name] as EventHandler<K> | readonly EventHandler<K>[] | undefined;
-		if (entry === undefined) return event;
-		const handlers = Array.isArray(entry) ? entry : [entry];
-		for (const handler of handlers) handler(params, event);
-		return event;
+		// Every handler sees the SAME envelope, so any one of them can cancel.
+		return handlersFor(events, name).reduce((event, handler) => {
+			handler(params, event);
+			return event;
+		}, makeEvent());
 	},
 });

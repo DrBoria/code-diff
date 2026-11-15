@@ -1,194 +1,305 @@
-# The architecture of @md-code/code-diff.
-#
-# `interface/` is the contract: types only, no logic.
-# `geometry/` and `connections/` are pure MODEL: no React, no DOM, no
-#   colours — they turn lines, boxes and ids into plain data.
-# `surface/` and the renderers in `columns/` are the VIEW: they paint that data.
-# `index.ts` and `view.tsx` are the entries.
-#
-# Node names are the real folder/file names, so a file in the wrong place is
-# reported instead of silently accepted.
-
-codeRoles:
-  - slug: contract
-    name: contract
-    infer:
-      - kind: { own: { is: { in: [InterfaceDeclaration, TypeAliasDeclaration] } } }
-    actions:
-      declare: { where: [{ role: contract }] }
-      export: { where: [{ role: contract }] }
-      typeImport: { where: [{ role: contract }, { role: model }, { role: view }, { role: entry }] }
-
-  - slug: model
-    name: model
-    infer:
-      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction, VariableDeclaration] } } }
-    actions:
-      declare: { where: [{ role: model }] }
-      export: { where: [{ role: model }, { role: entry }] }
-      import: { where: [{ role: model }, { role: view }, { role: entry }] }
-      call: { where: [{ role: model }, { role: view }, { role: entry }] }
-      typeImport: { where: [{ role: model }, { role: view }, { role: entry }] }
-
-  - slug: view
-    name: view
-    infer:
-      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction, VariableDeclaration] } } }
-      - location: { path: { contains: ".tsx" } }
-    actions:
-      declare: { where: [{ role: view }] }
-      export: { where: [{ role: view }, { role: entry }] }
-      import: { where: [{ role: view }, { role: entry }] }
-      call: { where: [{ role: view }, { role: entry }] }
-      typeImport: { where: [{ role: model }, { role: view }, { role: entry }] }
-
-  - slug: entry
-    name: entry
-    infer:
-      - location: { path: { in: ["index.ts", "view.tsx"] } }
-    actions:
-      declare: { where: [{ role: entry }] }
-      export: { where: [{ role: entry }] }
-      import: { where: [{ role: entry }] }
-      call: { where: [{ role: entry }] }
-      typeImport: { where: [{ role: entry }] }
+# code-diff — feature folders. A feature owns its types, its dumb components and
+# its hooks (in hooks/); nothing else lives here. The invariants below are the
+# base floor every repository shares.
 
 nodes:
   - slug: root
     name: .
-    children: [interface, geometry, connections, marks, rows, columns, surface, tests, config.ts, constants.ts, vitest.config.ts, index.ts, view.tsx, eslint.config.mjs, package.json, tsconfig.json, README.md, ARCHITECTURE.md, reports]
+    children: [board, columns, rows, ribbon, surface, styles, components, demo, tests, reports, index.ts, { name: view.tsx, role: barrel }, config.ts, package.json, pnpm-lock.yaml, tsconfig.json, vitest.config.ts, eslint.config.mjs, architecture.yaml, README.md, ARCHITECTURE.md, LICENSE, .gitignore]
 
-  - slug: contract-folder
-    name: interface
-    role: contract
+  - slug: board
+    name: board
     parent: root
-    children: ["*"]
+    children: ["*.ts", "*.tsx", "hooks"]
 
-  - slug: geometry-folder
-    name: geometry
-    role: model
-    parent: root
-    children: ["*"]
-
-  - slug: connections-folder
-    name: connections
-    role: model
-    parent: root
-    children: ["*"]
-
-  # `marks/` is a MODEL-side helper for the producer: it turns semantic "this name
-  # matches that name" links into character positions. It is the ONE place allowed
-  # to locate text, because it runs at the edge where positions are derived — not
-  # in a renderer. The view still only paints offsets it was given.
-  - slug: marks-folder
-    name: marks
-    role: model
-    parent: root
-    children: ["*"]
-
-  - slug: rows-folder
-    name: rows
-    role: model
-    parent: root
-    children: ["*"]
-
-  - slug: config-file
-    name: config.ts
-    role: model
-    parent: root
-
-  - slug: constants-file
-    name: constants.ts
-    role: model
-    parent: root
-
-  - slug: vitest-config
-    name: vitest.config.ts
-    role: entry
-    parent: root
-
-  # Tests exercise the public API; they are not part of the shipped view/model
-  # and are exempt from the representation and size invariants.
-  - slug: tests-folder
-    name: tests
-    role: [model, view, entry]
-    parent: root
-    children: ["*"]
-
-  # A column and its renderer live in the same folder; the `.tsx` one is the
-  # view, the `.ts` one is the model that describes it.
-  - slug: columns-folder
+  - slug: columns
     name: columns
-    role: [model, view]
     parent: root
-    children: ["*"]
+    children: ["*.ts", "*.tsx", "hooks"]
 
-  - slug: board-folder
+  - slug: rows
+    name: rows
+    parent: root
+    children: ["*.ts", "*.tsx", "hooks"]
+
+  - slug: ribbon
+    name: ribbon
+    parent: root
+    children: ["*.ts", "*.tsx", "hooks"]
+
+  - slug: surface
     name: surface
-    role: view
     parent: root
-    children: ["*"]
+    children: ["*.ts", "*.tsx", "hooks"]
 
-  - slug: index-entry
-    name: index.ts
-    role: entry
+  - slug: styles
+    name: styles
     parent: root
+    children: ["*.ts", "*.tsx"]
 
-  - slug: view-entry
-    name: view.tsx
-    role: entry
+  - slug: components
+    name: components
     parent: root
+    children: ["*.ts", "*.tsx", "hooks"]
+
+  - slug: demo
+    name: demo
+    parent: root
+    children: ["*.ts", "*.tsx", "fixtures"]
+
+  - slug: demo-fixtures
+    name: fixtures
+    parent: demo
+    children: ["*.ts", "*.tsx"]
+
+  - slug: tests
+    name: tests
+    parent: root
+    children: ["*.ts", "*.tsx", "model", "view"]
+
+  - slug: tests-model
+    name: model
+    parent: tests
+    children: ["*.ts", "*.tsx"]
+
+  - slug: tests-view
+    name: view
+    parent: tests
+    children: ["*.ts", "*.tsx"]
+
+  - slug: board-hooks
+    name: hooks
+    parent: board
+    children: ["*.ts", "*.tsx"]
+
+  - slug: columns-hooks
+    name: hooks
+    parent: columns
+    children: ["*.ts", "*.tsx"]
+
+  - slug: rows-hooks
+    name: hooks
+    parent: rows
+    children: ["*.ts", "*.tsx"]
+
+  - slug: ribbon-hooks
+    name: hooks
+    parent: ribbon
+    children: ["*.ts", "*.tsx"]
+
+  - slug: surface-hooks
+    name: hooks
+    parent: surface
+    children: ["*.ts", "*.tsx"]
+
+  - slug: components-hooks
+    name: hooks
+    parent: components
+    children: ["*.ts", "*.tsx"]
+
+# ── codeRoles ────────────────────────────────────────────────────────────────
+# What the code IS. First matching infer wins; a role with no home may live
+# anywhere in the tree, and every role may use every other — this package is one
+# layer of generic view code, so the permissions are open by design.
+
+codeRoles:
+  - slug: sharedTypes
+    name: shared type
+    infer:
+      - kind: { own: { is: { in: [InterfaceDeclaration, TypeAliasDeclaration] } } }
+    actions:
+      declare: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      export: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      import: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      typeImport: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      read: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      assign: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      mutate: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+
+  - slug: hook
+    name: react hook
+    infer:
+      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction, VariableDeclaration] } } }
+      - name: { matches: "use[A-Z]*" }
+    actions:
+      declare: { where: [{ role: hook }, { role: viewComponent }, { role: logic }] }
+      export: { where: [{ role: hook }, { role: viewComponent }, { role: logic }] }
+      import: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      call: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      typeImport: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      read: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      assign: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      mutate: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+
+  - slug: styledBlock
+    name: styled block
+    infer:
+      - kind: { own: { is: { equals: VariableDeclaration } } }
+      - calls: { any: { module: { equals: "styled-components" } } }
+    actions:
+      declare: { where: [{ role: styledBlock }, { role: viewComponent }] }
+      export: { where: [{ role: styledBlock }, { role: viewComponent }] }
+      import: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      call: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      typeImport: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      read: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      assign: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      mutate: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+
+  - slug: viewComponent
+    name: view component
+    infer:
+      - framework: { component: { equals: true } }
+    actions:
+      declare: { where: [{ role: viewComponent }, { role: hook }, { role: logic }] }
+      export: { where: [{ role: viewComponent }, { role: hook }, { role: logic }] }
+      import: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      call: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      typeImport: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      read: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      assign: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      mutate: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+
+  - slug: testCode
+    name: test
+    infer:
+      - location: { path: { matches: "**/tests/**" } }
+    actions:
+      declare: { where: [{ role: testCode }] }
+      export: { where: [{ role: testCode }] }
+      import: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      call: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      typeImport: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      read: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      assign: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      mutate: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+
+  - slug: barrel
+    name: public barrel
+    infer:
+      # A barrel is a file of re-exports: every export republishes another
+      # module's binding (`from` set), and the file declares no code of its own
+      # (no exported function/variable). index.ts is the model barrel; view.tsx
+      # is the React entry barrel.
+      - file:
+          exports: { length: { gt: 0 }, every: { from: { isSet: true } } }
+      - kind: { own: { is: { in: [JSDocComment, MultiLineCommentTrivia, SingleLineCommentTrivia] } } }
+    actions:
+      declare: { where: [{ role: barrel }] }
+      export: { where: [{ role: barrel }, { role: logic }, { role: hook }, { role: viewComponent }, { role: sharedTypes }, { role: styledBlock }] }
+      import: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }, { role: barrel }] }
+      typeImport: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }, { role: barrel }] }
+      call: { where: [{ role: barrel }] }
+      read: { where: [{ role: barrel }] }
+      assign: { where: [{ role: barrel }] }
+      mutate: { where: [{ role: barrel }] }
+
+  - slug: objectMember
+    name: object member
+    infer:
+      - kind:
+          own: { is: { in: [FunctionDeclaration, ArrowFunction, FunctionExpression, MethodDeclaration] } }
+          parent: { is: { in: [PropertyAssignment, ObjectLiteralExpression] } }
+    actions:
+      declare: { where: [{ role: objectMember }, { role: logic }, { role: hook }, { role: viewComponent }] }
+      export: { where: [{ role: objectMember }, { role: logic }] }
+      import: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }, { role: objectMember }] }
+      typeImport: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }, { role: objectMember }] }
+      call: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }, { role: objectMember }] }
+      read: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }, { role: objectMember }] }
+      assign: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }, { role: objectMember }] }
+      mutate: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }, { role: objectMember }] }
+
+  - slug: logic
+    name: logic
+    infer:
+      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction, VariableDeclaration] } } }
+    actions:
+      declare: { where: [{ role: logic }, { role: hook }, { role: viewComponent }, { role: styledBlock }, { role: testCode }, { role: sharedTypes }] }
+      export: { where: [{ role: logic }, { role: hook }, { role: viewComponent }, { role: styledBlock }, { role: testCode }, { role: sharedTypes }] }
+      import: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      call: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      typeImport: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      read: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      assign: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+      mutate: { where: [{ role: sharedTypes }, { role: hook }, { role: viewComponent }, { role: logic }, { role: styledBlock }, { role: testCode }] }
+
 
 invariants:
-  # ── MIGRATED FROM THE OTHER REPOSITORIES ──────────────────────────────────
+  # ── THE BASE FLOOR (same rules as the other repositories) ─────────────────
+  # Each infer entry is ONE filter over a candidate's facts: every key in the
+  # entry must match. A type declaration is not a function, so the function
+  # rules name the function kinds AND require a name — interfaces and consts
+  # are not their subject.
+
   - id: no-require
     infer:
       - imports: { any: { form: { is: "require" } } }
+        report:
+          code: rewrite
+          description: "`{what}` reaches a module through `require`."
+          fix:
+            message: "Use an `import` — the package is ESM."
 
   - id: no-classes
     infer:
       - kind: { own: { is: { equals: ClassDeclaration } } }
+        report:
+          code: rewrite
+          description: "`{what}` is a class."
+          fix:
+            message: "Write it as functions and plain data."
 
   - id: no-empty-functions
     infer:
-      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction] } } }
       - calls: { length: { equals: 0 } }
-      - assignments: { length: { equals: 0 } }
-      - returns: { length: { equals: 0 } }
+        assignments: { length: { equals: 0 } }
+        returns: { length: { equals: 0 } }
+        kind:
+          own: { is: { in: [FunctionDeclaration, FunctionExpression, ArrowFunction, MethodDeclaration, GetAccessor, SetAccessor] } }
+          descendants: { any: { is: { equals: Block } } }
+        name: { isSet: true }
+        report:
+          code: remove
+          description: "`{what}` has an empty body. It either must do something or not exist."
+          fix:
+            message: "Implement it, or delete it and its call sites."
 
   - id: no-useless-functions
     infer:
-      - kind: { own: { is: { in: [FunctionDeclaration, ArrowFunction] } } }
-      - returns: { length: { equals: 1 } }
-      - branches: { length: { equals: 0 } }
-      - locals: { length: { equals: 0 } }
+      # ONE return, no branches, no locals — a name given to a single expression.
+      - kind:
+          own: { is: { in: [FunctionDeclaration, ArrowFunction, FunctionExpression, MethodDeclaration] } }
+          parent: { is: { notIn: [PropertyAssignment] } }
+          descendants: { any: { is: { equals: Block } } }
+        name: { isSet: true }
+        assignments: { length: { equals: 0 } }
+        branches: { length: { equals: 0 } }
+        returns:
+          length: { equals: 1 }
+          any:
+            kind: { equals: ReturnStatement }
+            exprKind: { equals: Identifier }
+        report:
+          code: remove
+          description: "`{what}` is one expression given a name: its whole body is a single `return`, with no branch and no local."
+          fix:
+            message: "Inline it at the call sites, or make it carry a rule the caller must not restate."
 
   - id: no-oversized-files
     infer:
       - lines: { length: { gt: 200 } }
+        report:
+          code: split
+          description: "`{what}` is over 200 lines."
+          fix:
+            message: "Split it by feature: types, logic and view in their own files."
 
   - id: no-large-folders
-    where: [{ node: geometry-folder }, { node: connections-folder }, { node: board-folder }]
     infer:
       - files: { length: { gt: 5 } }
-
-  # ── REPRESENTATION, NOT DERIVATION ────────────────────────────────────────
-  #
-  # Evidence arrives as POSITIONS: `Mark { from, to }` character offsets, item
-  # ids, column ids. A renderer cuts text at the offsets it was given; it never
-  # goes looking for them. "Highlight by column number, not by searching for a
-  # string inside a substring" — a word found by `indexOf`/`match` is a word the
-  # decision maker never put there.
-  #
-  # The rule binds the VIEW (surface/ and the columns renderers). `marks/` is the
-  # model-side helper that DERIVES those positions for the producer at the edge,
-  # so it is exempt: it is the place positions come from, not a renderer.
-  - id: no-string-search
-    where: [{ node: board-folder }, { node: columns-folder }]
-    infer:
-      - calls:
-          any:
-            action: { in: [indexOf, lastIndexOf, search, match, matchAll, lastMatch, split, replace, replaceAll] }
-    report:
-      message: "`{what}` locates text by searching it (`{violations}`)."
-      fix: "Pass the position instead: build `Mark { from, to }` / `Segment` / `Token` at the edge and paint at the given offset. code-diff represents positions, it does not derive them."
+        report:
+          code: split
+          description: "`{what}` holds more than 5 files."
+          fix:
+            message: "Group the files into sub-features (hooks/ already is one)."

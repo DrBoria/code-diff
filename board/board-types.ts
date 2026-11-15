@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Column, Fit, SyncGroup } from "../columns/column-types.js";
-import type { Row, RowId, RowRef, Token } from "../rows/row-types.js";
+import type { Row, RowRef, Token } from "../rows/row-types.js";
 import type { Ribbon } from "../ribbon/ribbon-types.js";
 import type { Theme } from "../styles/theme-types.js";
 import type { BoardAction } from "../components/actions-types.js";
@@ -74,5 +74,3 @@ export interface ResolvedConfig extends Required<Omit<BoardConfig, "boardHeight"
 	readonly boardHeight?: string;
 	readonly foldLabel: (count: number) => string;
 }
-
-export type { RowId };

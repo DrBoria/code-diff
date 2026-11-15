@@ -6,18 +6,15 @@
  * into ribbons, and group consecutive rows into one ribbon. No DOM, no colour.
  */
 import type { Ribbon, RibbonTextAnchor } from "./ribbon-types.js";
+import type { LineCell, LineRow } from "../rows/diff.js";
 
-/** One row as mark resolution needs it: a cell per column. */
-export interface MarkRow {
-	readonly type: string;
+/** One row/cell as mark resolution needs it: the comparison's own row shape,
+ *  widened only where a fold may nest rows. */
+export type MarkCell = Omit<LineCell, "no"> & { readonly no: number | string };
+export type MarkRow = Omit<LineRow, "cells" | "rows"> & {
 	readonly cells: readonly (MarkCell | null)[];
 	readonly rows?: readonly MarkRow[];
-}
-export interface MarkCell {
-	readonly no: number | string;
-	readonly text?: string;
-	readonly words?: readonly { readonly text: string }[];
-}
+};
 export interface MemberLinkEnd {
 	readonly name: string;
 	readonly key?: string;
@@ -47,13 +44,30 @@ export const rangeOf = (text: string, name: string): { from: number; to: number 
 	return { from: match.index, to: match.index + name.length };
 };
 
-export interface Located {
-	readonly line: string;
-	readonly from: number;
-	readonly to: number;
+/** A located range: an anchor's text coordinates, before its column is known. */
+export type Located = Pick<RibbonTextAnchor, "line" | "from" | "to">;
+
+export interface LocateArgs {
+	readonly rows: readonly MarkRow[];
+	readonly column: number;
+	readonly name: string;
+	readonly predicate?: (text: string) => boolean;
+	readonly line?: number;
 }
 
-export const locate = (rows: readonly MarkRow[], column: number, name: string, predicate?: (text: string) => boolean, line?: number): Located | null => {
+/** The range a name occupies in ONE row's cell, if the row admits it. */
+const locatedIn = (row: MarkRow, args: LocateArgs): Located | null => {
+	const cell = row.cells[args.column];
+	if (!cell || cell.no == null) return null;
+	const text = cellText(cell);
+	if (args.predicate && !args.predicate(text)) return null;
+	const range = rangeOf(text, args.name);
+	if (!range) return null;
+	return { line: String(cell.no), from: range.from, to: range.to };
+};
+
+/** The range a name occupies in one column's rows; the asked line wins. */
+export const locate = (args: LocateArgs): Located | null => {
 	let fallback: Located | null = null;
 	const visit = (list: readonly MarkRow[]): Located | null => {
 		for (const row of list) {
@@ -62,29 +76,27 @@ export const locate = (rows: readonly MarkRow[], column: number, name: string, p
 				if (nested) return nested;
 				continue;
 			}
-			const cell = row.cells[column];
-			if (!cell || cell.no == null) continue;
-			const text = cellText(cell);
-			if (predicate && !predicate(text)) continue;
-			const range = rangeOf(text, name);
-			if (!range) continue;
-			const found = { line: String(cell.no), from: range.from, to: range.to };
-			if (line != null && String(cell.no) === String(line)) return found;
-			if (!fallback) fallback = found;
+			const found = locatedIn(row, args);
+			if (found === null) continue;
+			if (args.line != null && found.line === String(args.line)) return found;
+			fallback ??= found;
 		}
 		return null;
 	};
-	return visit(rows) ?? fallback;
+	return visit(args.rows) ?? fallback;
 };
 
-/** A mark carrying the identity the model gave it, before duplicates resolve. */
-export interface KeyedMark extends RibbonTextAnchor {
+/** A mark carrying the identity the model gave it, before duplicates resolve.
+ *  `duplicate` is mutable here: pairing writes the twin into the mark itself. */
+export interface KeyedMark extends Omit<RibbonTextAnchor, "duplicate"> {
 	readonly name: string;
 	readonly key?: string;
+	duplicate?: { column: string; line: string; from: number; to: number };
 }
 
 const dupOf = (mark: RibbonTextAnchor): { column: string; line: string; from: number; to: number } => ({ column: mark.column, line: mark.line, from: mark.from, to: mark.to });
 
+/** Pair the k-th occurrence on one side with the k-th on the other, for one group. */
 const pairSides = (group: readonly KeyedMark[]): void => {
 	const sides = new Map<string, KeyedMark[]>();
 	for (const mark of group) {
@@ -92,16 +104,14 @@ const pairSides = (group: readonly KeyedMark[]): void => {
 		list.push(mark);
 		sides.set(mark.column, list);
 	}
-	const columns = [...sides.keys()];
-	if (columns.length < 2) return;
-	const left = sides.get(columns[0] as string) ?? [];
-	const right = sides.get(columns[1] as string) ?? [];
-	for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
-		const a = left[index];
-		const b = right[index];
+	const [first, second] = [...sides.values()];
+	if (first === undefined || second === undefined) return;
+	for (let index = 0; index < Math.min(first.length, second.length); index += 1) {
+		const a = first[index];
+		const b = second[index];
 		if (!a || !b) continue;
-		(a as { duplicate?: unknown }).duplicate = dupOf(b);
-		(b as { duplicate?: unknown }).duplicate = dupOf(a);
+		a.duplicate = dupOf(b);
+		b.duplicate = dupOf(a);
 	}
 };
 
@@ -116,7 +126,7 @@ const groupBy = (marks: readonly KeyedMark[], keyOf: (mark: KeyedMark) => string
 	return groups;
 };
 
-/** Resolve duplicates in place: by KEY first, then by NAME for what is left. */
+/** Resolve duplicates: by KEY first (identity), then by NAME for what is left. */
 export const pairTwins = (marks: readonly KeyedMark[]): RibbonTextAnchor[] => {
 	for (const group of groupBy(marks, (m) => m.key ?? m.name).values()) pairSides(group);
 	const unpaired = marks.filter((m) => m.duplicate === undefined);
@@ -129,36 +139,33 @@ const columnIndex = (columns: readonly string[], id: string): number => {
 	return index === -1 ? 0 : index;
 };
 
+/** One link's two located ends, as keyed marks ready for twin pairing. */
+const laneMarks = (rows: readonly MarkRow[], columns: readonly string[], link: MemberLink): { left: Located; right: Located; marks: [KeyedMark, KeyedMark] } | null => {
+	const left = locate({ rows, column: columnIndex(columns, link.leftColumn), name: link.left.name, line: link.left.line });
+	const right = locate({ rows, column: columnIndex(columns, link.rightColumn), name: link.right.name, line: link.right.line });
+	if (!left || !right) return null;
+	const mark = (column: string, end: MemberLinkEnd, at: Located): KeyedMark => ({ column, line: at.line, from: at.from, to: at.to, name: end.name, ...(end.key === undefined ? {} : { key: end.key }) });
+	return { left, right, marks: [mark(link.leftColumn, link.left, left), mark(link.rightColumn, link.right, right)] };
+};
+
 /** Resolve semantic links into ribbons with anchors + duplicates. */
 export const resolveLanes = (rows: readonly MarkRow[], columns: readonly string[], links: readonly MemberLink[]): Ribbon[] => {
-	const lanes: { link: MemberLink; left: Located; right: Located }[] = [];
-	const allMarks: KeyedMark[] = [];
-	const marksByLane: KeyedMark[][] = [];
+	const lanes: { link: MemberLink; left: Located; right: Located; marks: [KeyedMark, KeyedMark] }[] = [];
 	for (const link of links) {
-		const left = locate(rows, columnIndex(columns, link.leftColumn), link.left.name, undefined, link.left.line);
-		const right = locate(rows, columnIndex(columns, link.rightColumn), link.right.name, undefined, link.right.line);
-		if (!left || !right) continue;
-		const leftMark: KeyedMark = { column: link.leftColumn, line: left.line, from: left.from, to: left.to, name: link.left.name, ...(link.left.key === undefined ? {} : { key: link.left.key }) };
-		const rightMark: KeyedMark = { column: link.rightColumn, line: right.line, from: right.from, to: right.to, name: link.right.name, ...(link.right.key === undefined ? {} : { key: link.right.key }) };
-		lanes.push({ link, left, right });
-		marksByLane.push([leftMark, rightMark]);
-		allMarks.push(leftMark, rightMark);
+		const resolved = laneMarks(rows, columns, link);
+		if (resolved !== null) lanes.push({ link, ...resolved });
 	}
-	pairTwins(allMarks);
-	return lanes.map(({ link, left, right }, index) => {
-		const pair = marksByLane[index] ?? [];
-		const anchors: RibbonTextAnchor[] = pair.map(({ column, line, from, to, duplicate }) => (duplicate === undefined ? { column, line, from, to } : { column, line, from, to, duplicate }));
-		return {
-			id: link.connectionId,
-			...(link.label === undefined ? {} : { label: link.label }),
-			tone: link.tone ?? "duplicate",
-			ends: [
-				{ column: link.leftColumn, rows: [left.line] },
-				{ column: link.rightColumn, rows: [right.line] },
-			],
-			anchors,
-		};
-	});
+	pairTwins(lanes.flatMap((lane) => lane.marks));
+	return lanes.map(({ link, left, right, marks }) => ({
+		id: link.connectionId,
+		...(link.label === undefined ? {} : { label: link.label }),
+		tone: link.tone ?? "duplicate",
+		ends: [
+			{ column: link.leftColumn, rows: [left.line] },
+			{ column: link.rightColumn, rows: [right.line] },
+		],
+		anchors: marks.map(({ column, line, from, to, duplicate }) => (duplicate === undefined ? { column, line, from, to } : { column, line, from, to, duplicate })),
+	}));
 };
 
 // Row-level grouping lives in its own file (ribbon-group.ts).

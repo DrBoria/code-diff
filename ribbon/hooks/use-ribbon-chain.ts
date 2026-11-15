@@ -26,9 +26,34 @@ export interface ChainApi {
 	readonly chainOfRow: (ref: RowRef) => Chain | null;
 	/** The chain of a ribbon id. */
 	readonly chainOfRibbon: (id: string) => Chain | null;
+	/**
+	 * The chain a WORD belongs to: the ribbon whose text anchor covers this
+	 * character. A row carries a dozen nested anchors (`return` ⊃ `call` ⊃ the
+	 * whole body); pointing at a word must light the lane that MARKS it, not the
+	 * first lane that happens to name the row.
+	 */
+	readonly chainOfWord: (ref: RowRef, char: number, line?: string) => Chain | null;
 }
 
 const keyOf = (column: string, id: string | number): string => `${column}::${String(id)}`;
+
+/** The narrowest anchor covering this character on this column/line, if any. */
+const narrowestAnchor = (ribbons: readonly Ribbon[], ref: RowRef, char: number, rowLine: string): Ribbon | null => {
+	let best: Ribbon | null = null;
+	let bestSpan = Infinity;
+	for (const ribbon of ribbons) {
+		for (const anchor of ribbon.anchors ?? []) {
+			if (anchor.column !== ref.column || String(anchor.line) !== rowLine) continue;
+			if (anchor.from > char || char >= anchor.to) continue;
+			const span = anchor.to - anchor.from;
+			if (span < bestSpan) {
+				bestSpan = span;
+				best = ribbon;
+			}
+		}
+	}
+	return best;
+};
 
 export const useRibbonChain = (ribbons: readonly Ribbon[]): ChainApi =>
 	useMemo(() => {
@@ -49,7 +74,6 @@ export const useRibbonChain = (ribbons: readonly Ribbon[]): ChainApi =>
 				return ribbon === undefined ? null : chainOf(ribbon);
 			},
 			chainOfRow: (ref) => {
-				const key = keyOf(ref.column, ref.row);
 				// The most specific ribbon naming this row: the one with the fewest rows.
 				let best: Ribbon | null = null;
 				let bestSize = Infinity;
@@ -62,7 +86,10 @@ export const useRibbonChain = (ribbons: readonly Ribbon[]): ChainApi =>
 						best = ribbon;
 					}
 				}
-				void key;
+				return best === null ? null : chainOf(best);
+			},
+			chainOfWord: (ref, char, line) => {
+				const best = narrowestAnchor(ribbons, ref, char, line ?? String(ref.row));
 				return best === null ? null : chainOf(best);
 			},
 		};

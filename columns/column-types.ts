@@ -1,4 +1,4 @@
-import type { Row, RowId } from "../rows/row-types.js";
+import type { Box, Row, RowId } from "../rows/row-types.js";
 
 /**
  * ── COLUMN ─────────────────────────────────────────────────────────────────
@@ -36,8 +36,8 @@ export type Fit = "scroll" | "rubber";
 
 /** A measured layout: column boxes + row anchor boxes in content coordinates. */
 export interface Layout {
-	readonly columns: ReadonlyMap<string, import("../rows/row-types.js").Box>;
-	readonly anchors: ReadonlyMap<string, import("../rows/row-types.js").Box>;
+	readonly columns: ReadonlyMap<string, Box>;
+	readonly anchors: ReadonlyMap<string, Box>;
 }
 
 /** The set of row ids per column that take part in at least one ribbon. */

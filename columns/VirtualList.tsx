@@ -1,6 +1,8 @@
-import { useLayoutEffect, type ReactElement, type ReactNode } from "react";
+import { useCallback, type ReactElement, type ReactNode } from "react";
 import styled from "styled-components";
-import { useVirtualList } from "./hooks/use-virtual-list.js";
+import { useVirtualList, type VirtualArgs } from "./hooks/use-virtual-list.js";
+import { useDomObserver } from "../surface/hooks/use-dom-observer.js";
+import { readSlotHeights } from "./slot-heights.js";
 
 /**
  * The dumb windowed scroller. It owns the scroll element (the board reads a
@@ -31,34 +33,24 @@ const Slot = styled.div`
 	width: 100%;
 `;
 
-export interface VirtualListProps {
-	readonly count: number;
-	readonly rowHeight: number;
-	readonly overscan: number;
-	readonly fullMount: number;
+/** The scroller takes the windowing contract plus its own chrome knobs. */
+export interface VirtualListProps extends VirtualArgs {
 	readonly maxHeight: string;
 	readonly rubber: boolean;
 	readonly cap: boolean;
 	readonly bounded: boolean;
 	readonly renderRow: (index: number) => ReactNode;
-	readonly onWindow?: () => void;
 }
 
 export const VirtualList = ({ count, rowHeight, overscan, fullMount, maxHeight, rubber, cap, bounded, renderRow, onWindow }: VirtualListProps): ReactElement => {
-	const { range, offsets, scroller, content, observeSlot } = useVirtualList(count, rowHeight, overscan, fullMount, onWindow);
+	const { range, offsets, scroller, content, observeSlot } = useVirtualList({ count, rowHeight, overscan, fullMount, onWindow });
 
-	useLayoutEffect(() => {
-		const element = content.current;
-		if (element === null) return undefined;
-		const observer = new ResizeObserver((entries) => {
-			for (const entry of entries) {
-				const slot = (entry.target as HTMLElement).dataset.slot;
-				if (slot !== undefined) observeSlot(Number(slot), entry.contentRect.height);
-			}
-		});
-		for (const child of element.querySelectorAll("[data-slot]")) observer.observe(child);
-		return () => observer.disconnect();
-	}, [range.start, range.end, count]);
+	// Every mounted slot is observed for its REAL height; the window re-decides
+	// itself when the mounted set changes (range/count in the callback identity).
+	const onSizes = useCallback((): void => {
+		if (content.current !== null) readSlotHeights(content.current, observeSlot);
+	}, [content, observeSlot, range.start, range.end, count]);
+	useDomObserver({ root: content, selector: "[data-slot]", onChange: onSizes });
 
 	const rows: ReactNode[] = [];
 	for (let index = range.start; index < range.end; index += 1) {

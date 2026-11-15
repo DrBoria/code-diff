@@ -15,12 +15,10 @@ const utilsUniqueness = require("@md-code/utils-uniqueness");
 const entitiesUniqueness = require("@md-code/entities-uniqueness");
 const componentUniqueness = require("@md-code/component-uniqueness");
 
-const SOURCES = ["src/**/*.ts", "src/**/*.tsx", "interface/**/*.ts"];
+const SOURCES = ["board/**/*.{ts,tsx}", "columns/**/*.{ts,tsx}", "rows/**/*.{ts,tsx}", "ribbon/**/*.{ts,tsx}", "surface/**/*.{ts,tsx}", "styles/**/*.{ts,tsx}", "components/**/*.{ts,tsx}", "config.ts", "index.ts", "view.tsx"];
 
-// A package this small has one layer: every file may compare against every other,
-// which is what compareAll is for — the layered rule would never let `src/` see
-// `interface/`.
-const scan = { root: here, tsconfig: "tsconfig.json", compareAll: true };
+// One scan root for every feature: the plugins compare the whole package.
+const scan = { root: here, tsconfig: "tsconfig.json" };
 
 export default [
 	{ ignores: ["dist/**", "node_modules/**", "reports/**"] },
@@ -90,15 +88,15 @@ export default [
 			],
 			"md-code-utils/utils-uniqueness": [
 				"error",
-				{ ...scan, utilsFolder: ["src", "interface"], exportPath: "reports/utils-catalog.json" },
+				{ ...scan, utilsFolder: ["board", "columns", "rows", "ribbon", "surface", "styles", "components"], exportPath: "reports/utils-catalog.json" },
 			],
 			"md-code-entities/entities-uniqueness": [
 				"error",
-				{ ...scan, roots: ["src", "interface"], exportPath: "reports/entities-catalog.json", exclude: [] },
+				{ ...scan, roots: ["board", "columns", "rows", "ribbon", "surface", "styles", "components"], exportPath: "reports/entities-catalog.json", exclude: [] },
 			],
 			"md-code-components/component-uniqueness": [
 				"error",
-				{ ...scan, componentsFolder: ["src"], exportPath: "reports/component-catalog.json" },
+				{ ...scan, componentsFolder: ["board", "columns", "rows", "ribbon", "surface", "styles", "components"], exportPath: "reports/component-catalog.json" },
 			],
 		},
 	},

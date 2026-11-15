@@ -1,8 +1,7 @@
 import { useMemo } from "react";
 import type { Column } from "../../columns/column-types.js";
 import type { Ribbon } from "../ribbon-types.js";
-import type { Theme, SemanticColor } from "../../styles/theme-types.js";
-import { colorOf } from "../../styles/theme-types.js";
+import { colorOf, type Theme, type SemanticColor } from "../../styles/theme-types.js";
 
 /**
  * ── THE ONE SOURCE OF TONE ─────────────────────────────────────────────────
@@ -24,6 +23,20 @@ export interface ToneApi {
 	readonly hotOf: (ribbon: Ribbon) => string;
 }
 
+/** A ribbon's rows' unanimous tone, or null when they disagree (or are silent). */
+const unanimousTone = (ribbon: Ribbon, rowTone: ReadonlyMap<string, string>): string | null => {
+	let seen: string | null = null;
+	for (const end of ribbon.ends ?? []) {
+		for (const id of end.rows ?? []) {
+			const tone = rowTone.get(`${end.column}::${String(id)}`);
+			if (tone === undefined) continue;
+			if (seen !== null && seen !== tone) return null;
+			seen = tone;
+		}
+	}
+	return seen;
+};
+
 export const useRibbonTone = (ribbons: readonly Ribbon[], columns: readonly Column[], theme: Theme): ToneApi => {
 	const rowTone = useMemo(() => {
 		const map = new Map<string, string>();
@@ -32,18 +45,7 @@ export const useRibbonTone = (ribbons: readonly Ribbon[], columns: readonly Colu
 	}, [columns]);
 
 	return useMemo(() => {
-		const toneOf = (ribbon: Ribbon): string => {
-			let seen: string | null = null;
-			for (const end of ribbon.ends ?? []) {
-				for (const id of end.rows ?? []) {
-					const tone = rowTone.get(`${end.column}::${String(id)}`);
-					if (tone === undefined) continue;
-					if (seen === null) seen = tone;
-					else if (seen !== tone) return ribbon.tone ?? "duplicate";
-				}
-			}
-			return seen ?? ribbon.tone ?? "duplicate";
-		};
+		const toneOf = (ribbon: Ribbon): string => unanimousTone(ribbon, rowTone) ?? ribbon.tone ?? "duplicate";
 		const colorOfKey = (key: string): SemanticColor => colorOf(theme, key);
 		return {
 			toneOf,

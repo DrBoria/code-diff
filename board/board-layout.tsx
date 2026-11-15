@@ -39,11 +39,18 @@ export const Corridor = styled.div`
 	pointer-events: none;
 `;
 
+/** One column's grid width: a ratio, a fixed width, or an equal share. */
+const widthOf = (column: BoardProps["columns"][number]): string => {
+	if (column.ratio !== undefined) return `${column.ratio}fr`;
+	if (column.width === undefined) return "minmax(0, 1fr)";
+	return `${column.width}px`;
+};
+
 /** The grid template: a width per column plus a corridor after some of them. */
 export const templateOf = (props: BoardProps): string =>
 	props.columns
 		.map((column, index) => {
-			const width = column.ratio !== undefined ? `${column.ratio}fr` : column.width === undefined ? "minmax(0, 1fr)" : `${column.width}px`;
+			const width = widthOf(column);
 			const corridor = props.corridors?.[index];
 			if (corridor === undefined) return width;
 			return props.fit === "rubber" ? `${width} minmax(0, ${corridor}px)` : `${width} ${corridor}px`;
