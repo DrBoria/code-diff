@@ -50,6 +50,31 @@ interface MeasuredEnd {
  */
 export type ToneLookup = (column: string, id: string) => string | null;
 
+/**
+ * THE TONE A LANE IS DRAWN IN, resolved from the rows it actually joins. A lane the
+ * owner labelled `same` may name rows the owner also marked `differs` (a property
+ * that exists on both sides but whose text breaks the correspondence). Drawing the
+ * ribbon red over green bands claimed "red or green?" — the road and the rows it
+ * joins must be ONE colour. So the lane takes the tone of its rows: if every row it
+ * names carries the same explicit tone, that is the lane's tone; otherwise the
+ * owner's label stands. The bands are cut by the same rule, so road and bands agree.
+ */
+const resolvedTone = (connection: Connection, toneOf?: ToneLookup): string => {
+	const own = connection.tone ?? "default";
+	if (toneOf === undefined) return own;
+	let seen: string | null = null;
+	for (const end of connection.ends) {
+		for (const id of end.items) {
+			const tone = toneOf(end.column, String(id));
+			if (tone === null) continue;
+			if (seen === null) seen = tone;
+			else if (seen !== tone) return own;
+		}
+	}
+
+	return seen ?? own;
+};
+
 const boxesOfEnd = (end: ConnectionEnd, lookup: AnchorLookup): Array<{ id: string; box: Box }> =>
 	end.items
 		.map((id) => ({ id: String(id), box: lookup(end.column, String(id)) }))
@@ -305,7 +330,7 @@ export const connectionShape = (
 
 	return {
 		id: connection.id,
-		tone: connection.tone ?? "default",
+		tone: resolvedTone(connection, toneOf),
 		label: connection.label ?? null,
 		bands,
 		ribbons,

@@ -62,3 +62,38 @@ describe("controller actions (view only reports, never merges)", () => {
 		expect(onPick).toHaveBeenCalled();
 	});
 });
+
+describe("connections name real ids only", () => {
+	it("drops a lane that names an id no column carries", () => {
+		// `ghost` is not a row of either column: the lane is a road to nowhere and must
+		// not be drawn. The real lane (`1`↔`1`) survives.
+		const ghost: Connection = { id: "ghost", ends: [{ column: "left", items: ["999"] }, { column: "right", items: ["1"] }] };
+		const real: Connection = { id: "real", ends: [{ column: "left", items: ["1"] }, { column: "right", items: ["1"] }] };
+		render(renderBoard({ columns: [codeColumn("left", ["a"]), codeColumn("right", ["a"])], connections: [ghost, real] }));
+		const lanes = [...document.querySelectorAll("[data-lane]")].map((g) => g.getAttribute("data-lane"));
+		expect(lanes).toContain("real");
+		expect(lanes).not.toContain("ghost");
+	});
+
+	it("drops an id a column does not carry but keeps the lane's real ends", () => {
+		// The left end names a real row AND a ghost; the ghost is dropped, the lane stays.
+		const connection: Connection = { id: "c", ends: [{ column: "left", items: ["1", "999"] }, { column: "right", items: ["1"] }] };
+		render(renderBoard({ columns: [codeColumn("left", ["a"]), codeColumn("right", ["a"])], connections: [connection] }));
+		expect(document.querySelector('[data-lane="c"]')).toBeTruthy();
+	});
+});
+
+describe("a hot ribbon is one uniform shade", () => {
+	it("paints the pointed-at lane ONCE, never the road laid down twice", () => {
+		const connection: Connection = { id: "c", tone: "same", ends: [{ column: "left", items: ["1"] }, { column: "right", items: ["1"] }] };
+		render(renderBoard({ columns: [codeColumn("left", ["a"]), codeColumn("right", ["a"])], connections: [connection] }));
+		const lane = document.querySelector('[data-lane="c"]') as SVGGElement;
+		expect(lane).toBeTruthy();
+		// Hover the lane: it becomes hot. jsdom has no layout, so the ribbon path may be
+		// empty — but the lane owns exactly ONE path per ribbon, never a doubled stack.
+		fireEvent.pointerOver(lane);
+		const paths = lane.querySelectorAll("path");
+		// One ribbon between two columns → one path, hot or not.
+		expect(paths.length).toBeLessThanOrEqual(1);
+	});
+});

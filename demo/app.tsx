@@ -25,11 +25,11 @@ const theme: Theme = {
 
 // WebStorm-like: green = added/unique, red = removed/changed, blue = conflict.
 const tones: Tones = {
-	same: { fill: "rgba(120,200,170,0.10)", line: "rgba(120,200,170,0.25)", hot: "rgba(120,200,170,0.30)", paint: "rgba(120,200,170,0.20)" },
-	differs: { fill: "rgba(255,107,107,0.12)", line: "rgba(255,107,107,0.30)", hot: "rgba(255,107,107,0.32)", paint: "rgba(255,107,107,0.22)" },
-	added: { fill: "rgba(120,200,170,0.16)", line: "rgba(120,200,170,0.4)", hot: "rgba(120,200,170,0.36)", paint: "rgba(120,200,170,0.26)" },
-	removed: { fill: "rgba(255,107,107,0.16)", line: "rgba(255,107,107,0.4)", hot: "rgba(255,107,107,0.36)", paint: "rgba(255,107,107,0.26)" },
-	conflict: { fill: "rgba(120,160,255,0.16)", line: "rgba(120,160,255,0.4)", hot: "rgba(120,160,255,0.36)", paint: "rgba(120,160,255,0.26)" },
+	same: { fill: "rgba(120,200,170,0.10)", line: "rgba(120,200,170,0.25)", lineHot: "rgba(120,200,170,0.4)", hot: "rgba(120,200,170,0.30)", paint: "rgba(120,200,170,0.20)" },
+	differs: { fill: "rgba(255,107,107,0.12)", line: "rgba(255,107,107,0.28)", lineHot: "rgba(255,107,107,0.42)", hot: "rgba(255,107,107,0.32)", paint: "rgba(255,107,107,0.22)" },
+	added: { fill: "rgba(120,200,170,0.16)", line: "rgba(120,200,170,0.32)", lineHot: "rgba(120,200,170,0.46)", hot: "rgba(120,200,170,0.36)", paint: "rgba(120,200,170,0.26)" },
+	removed: { fill: "rgba(255,107,107,0.16)", line: "rgba(255,107,107,0.32)", lineHot: "rgba(255,107,107,0.46)", hot: "rgba(255,107,107,0.36)", paint: "rgba(255,107,107,0.26)" },
+	conflict: { fill: "rgba(120,160,255,0.16)", line: "rgba(120,160,255,0.32)", lineHot: "rgba(120,160,255,0.46)", hot: "rgba(120,160,255,0.36)", paint: "rgba(120,160,255,0.26)" },
 };
 
 const codeCol = (id: string, lines: string[], extra: Partial<Column> = {}): Column => ({
@@ -112,6 +112,7 @@ const App = () => {
 			<div style={{ color: theme.faint, fontSize: 12, marginBottom: 8 }}>{f.subtitle}</div>
 			<div style={{ border: `1px solid ${theme.edge}`, borderRadius: 8, overflow: "hidden" }}>
 				<CodeDiff
+					key={f.key}
 					theme={theme}
 					tones={tones}
 					columns={f.columns}

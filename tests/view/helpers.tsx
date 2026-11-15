@@ -16,8 +16,8 @@ export const theme: Theme = {
 };
 
 export const tones: Tones = {
-	same: { fill: "rgba(255,107,107,0.1)", line: "rgba(255,107,107,0.1)", hot: "rgba(255,107,107,0.3)" },
-	differs: { fill: "rgba(120,200,170,0.1)", line: "rgba(120,200,170,0.1)", hot: "rgba(120,200,170,0.3)" },
+	same: { fill: "rgba(255,107,107,0.1)", line: "rgba(255,107,107,0.2)", lineHot: "rgba(255,107,107,0.4)", hot: "rgba(255,107,107,0.3)" },
+	differs: { fill: "rgba(120,200,170,0.1)", line: "rgba(120,200,170,0.2)", lineHot: "rgba(120,200,170,0.4)", hot: "rgba(120,200,170,0.3)" },
 };
 
 export const codeColumn = (id: string, lines: string[], extra: Partial<Column> = {}): Column => ({

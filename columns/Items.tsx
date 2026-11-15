@@ -129,6 +129,7 @@ const Paint = styled.span<{ $strong?: boolean; $paint?: string }>`
 `;
 
 const Fold = styled.button<{ $rowHeight: number }>`
+	position: relative;
 	width: 100%;
 	height: ${(p) => p.$rowHeight}px;
 	line-height: ${(p) => p.$rowHeight}px;
@@ -224,22 +225,25 @@ export const Items = <Data,>({ column, render, onAction, connected, expanded = f
 	// WHAT is drawn, in board order — one entry per row, computed once. The ELEMENTS are
 	// built only for the rows the window mounts (`renderRow`), so a column of 500 lines
 	// never creates 500 rows to show twelve of them.
-	const slots: Array<{ fold: number } | { item: Item<Data>; index: number }> = [];
+	const slots: Array<{ fold: number; ids: string[] } | { item: Item<Data>; index: number }> = [];
 	let hidden = 0;
+	let hiddenIds: string[] = [];
 
 	items.forEach((it, index) => {
 		if (!shownAt(it)) {
 			hidden += 1;
+			hiddenIds.push(String(it.id));
 
 			return;
 		}
 		if (hidden > 0) {
-			slots.push({ fold: hidden });
+			slots.push({ fold: hidden, ids: hiddenIds });
 			hidden = 0;
+			hiddenIds = [];
 		}
 		slots.push({ item: it, index });
 	});
-	if (hidden > 0) slots.push({ fold: hidden });
+	if (hidden > 0) slots.push({ fold: hidden, ids: hiddenIds });
 
 	const renderRow = (at: number): ReactNode => {
 		const slot = slots[at];
@@ -250,6 +254,14 @@ export const Items = <Data,>({ column, render, onAction, connected, expanded = f
 
 			return (
 				<Fold key={`hidden-${at}`} $rowHeight={rowHeight} type="button" onClick={() => onReveal?.()}>
+					{/* A folded run still ADDRESSES every row it hides: a lane whose end is
+					    folded routes to this button (the rows' shared box) instead of
+					    vanishing or pointing at a row that is not on screen. The anchors are
+					    zero-width so they add no layout; the button's own box is what the
+					    geometry measures, and it is re-measured when the fold opens. */}
+					{slot.ids.map((id) => (
+						<span key={id} data-anchor={id} style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }} />
+					))}
 					<FoldText>{label(count)}</FoldText>
 				</Fold>
 			);

@@ -265,6 +265,14 @@ export interface Tone {
 	readonly fill: string;
 	readonly line?: string;
 	/**
+	 * The ribbon of THE ONE lane under the pointer: ONE uniform shade from the first
+	 * column to the last, the same hue as `line` held a little stronger. The board
+	 * paints it ONCE — never the road laid down twice, which stacked the alpha into a
+	 * wild bright bend in the middle ("a line that changes colour half-way"). Absent
+	 * = `line`, so a hot lane is the same road, only its caption and marks light up.
+	 */
+	readonly lineHot?: string;
+	/**
 	 * The fill of THE ONE lane under the pointer, painted on top of `fill`. A wash
 	 * that is identical on every row says nothing; the pointed-at lane is the only
 	 * row that has to be darker than its neighbours.

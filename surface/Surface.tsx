@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
 import styled, { ThemeProvider } from "styled-components";
-import type { Column, Fit, LaneMark, Renderer, Theme, ViewProps } from "../interface/types.js";
+import type { Column, Connection, Fit, LaneMark, Renderer, Theme, ViewProps } from "../interface/types.js";
 import { layoutColumn, layoutLookup, measureLayout, readScrollTops, type Layout } from "../geometry/measure.js";
 import { anchorOf } from "../columns/column.js";
 import { shapesOf, type ToneLookup } from "../geometry/ribbon.js";
@@ -227,10 +227,27 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		setLayout(next);
 	}, [config.bandGap]);
 
+	// A STABLE signature of the board's identity: which columns, which rows, which lanes.
+	// The props are fresh arrays on every render, so they cannot key an effect directly;
+	// this string changes only when the board itself changes (another tab, another pair).
+	const boardKey = useMemo(() => {
+		const cols = columns.map((column) => `${column.id}:${(column.items ?? []).map((it) => String(it.id)).join(",")}`).join("|");
+		const conns = connections.map((connection) => connection.id).join(",");
+
+		return `${cols}#${conns}`;
+	}, [columns, connections]);
+
 	useLayoutEffect(() => {
 		const element = root.current;
 		if (!element) return undefined;
 
+		// A NEW BOARD (another tab, another pair) must re-measure from scratch. The layout
+		// key is a value-hash of the boxes; after a switch the new columns can hash to the
+		// SAME key as the old board (same ids, same row heights), so `measure` would bail
+		// and keep the previous board's layout — the roads then point at rows that are not
+		// there (zero lanes until a fold is opened). Forgetting the key here guarantees the
+		// first measure of a new board always lands.
+		lastLayout.current = "";
 		measure();
 
 		// A column that changes its MOUNTED RANGE (virtual scroll) or its size changes
@@ -239,8 +256,25 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		observer.observe(element);
 		for (const child of element.querySelectorAll("[data-column]")) observer.observe(child);
 
-		return () => observer.disconnect();
-	}, [columns, connections, revealed, picked]);
+		// A TAB OR PAIR SWITCH settles one frame late: the new columns mount, the virtual
+		// window decides its range, and only THEN are the real boxes on screen. The first
+		// measure above can run against a half-mounted board (zero lanes until a resize).
+		// Re-measure after the commit settles — rAF for a visible tab, a timeout fallback
+		// for a hidden one where rAF is throttled — so the roads always find their rows.
+		let frame = 0;
+		const settle = (): void => {
+			frame = 0;
+			measure();
+		};
+		frame = requestAnimationFrame(settle);
+		const timer = setTimeout(settle, 60);
+
+		return () => {
+			observer.disconnect();
+			if (frame !== 0) cancelAnimationFrame(frame);
+			clearTimeout(timer);
+		};
+	}, [boardKey, revealed, picked, measure]);
 
 	// SCROLL → REPAINT. No state, no measurement: the offset is the only thing that
 	// moved, and every box is `content position − scroll offset`.
@@ -269,17 +303,44 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	const refs = new Map<string, string>();
 	// anchor → id, so a row under the pointer resolves to the item it stands for.
 	const idsByAnchor = new Map<string, string>();
+	// EVERY id the board actually carries, per column. A connection is a claim about
+	// ids; an id no column holds is not a row, it is a bug in the data. The board
+	// refuses to draw a road to nowhere: such ids are dropped from the lane below.
+	const knownIds = new Map<string, Set<string>>();
 	for (const column of columns) {
+		const set = new Set<string>();
 		for (const it of column.items ?? []) {
 			refs.set(`${column.id}\u0000${String(it.id)}`, anchorOf(it));
 			idsByAnchor.set(`${column.id}\u0000${anchorOf(it)}`, String(it.id));
+			set.add(String(it.id));
 		}
+		knownIds.set(column.id, set);
 	}
+	// THE CONNECTIONS, SANITISED. Every end keeps only ids its column actually carries,
+	// and an end left empty (or a lane left with fewer than two ends) is dropped — a
+	// ribbon needs two real rows to join. This is what makes "no nonexistent ids" a
+	// structural guarantee rather than a hope about the data: a lane that names a ghost
+	// row simply does not exist on the board, instead of drawing a broken road.
+	const lanes = useMemo(() => {
+		const out: Connection[] = [];
+		for (const connection of connections) {
+			const ends = connection.ends
+				.map((end) => ({ column: end.column, items: end.items.filter((id) => knownIds.get(end.column)?.has(String(id)) === true) }))
+				.filter((end) => end.items.length > 0);
+			if (ends.length < 2) continue;
+			out.push(ends.length === connection.ends.length && ends.every((end, at) => end.items.length === connection.ends[at]?.items.length) ? connection : { ...connection, ends });
+		}
+
+		return out;
+		// knownIds is rebuilt from columns each render; the sanitised lanes only change
+		// when the columns or the connections do.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [connections, columns]);
 	// How many lanes an id takes part in. An id in MANY lanes is a HUB (a summary row
 	// that stands for a whole kind); walking through it would light every row of that
 	// kind, which is not what the pointer asked for.
 	const laneCounts = new Map<string, number>();
-	for (const connection of connections) {
+	for (const connection of lanes) {
 		for (const end of connection.ends) {
 			for (const id of end.items) {
 				const key = `${end.column}\u0000${String(id)}`;
@@ -293,16 +354,16 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	// not hubs. A hub stands for many rows, so passing through it would highlight rows
 	// the pointer never touched.
 	const chainOf = (seed: { column: string; item: string }): Set<string> => {
-		const lanes = new Set<string>();
+		const chain = new Set<string>();
 		const seen = new Set([`${seed.column}\u0000${seed.item}`]);
 		const queue = [seed];
 		while (queue.length > 0) {
 			const at = queue.shift() as { column: string; item: string };
-			for (const connection of connections) {
-				if (lanes.has(connection.id)) continue;
+			for (const connection of lanes) {
+				if (chain.has(connection.id)) continue;
 				const joined = connection.ends.some((end) => end.column === at.column && end.items.some((id) => String(id) === at.item));
 				if (!joined) continue;
-				lanes.add(connection.id);
+				chain.add(connection.id);
 				for (const end of connection.ends) {
 					// Only an end naming ONE non-hub id is "the same thing, over there". An end
 					// that lists many ids is "all of these live here" — walking it would light
@@ -317,7 +378,7 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 			}
 		}
 
-		return lanes;
+		return chain;
 	};
 
 	// Hovering does NOT walk: the pointer names a lane, or a row, and the lanes that name
@@ -331,7 +392,7 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	// by the board — the data source never has to know about folding. A picked chain
 	// replaces that map, so every column outside it starts with an empty set.
 	const connected = new Map<string, Set<string>>();
-	const shown = focus === null ? connections : connections.filter((connection) => focus.has(connection.id));
+	const shown = focus === null ? lanes : lanes.filter((connection) => focus.has(connection.id));
 	if (focus !== null) for (const column of columns) connected.set(column.id, new Set<string>());
 	for (const connection of shown) {
 		for (const end of connection.ends) {
@@ -736,10 +797,16 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		// The RIBBON is a road, not a wash: it takes the tone's `line` colour (a stronger
 		// stroke than the row band) so the path between columns is actually visible on a
 		// dark surface. Falling back to the band's whisper-alpha fill made every ribbon
-		// invisible — "where are all the ribbons?". The pointed-at lane lays the same road
-		// twice so alpha adds and the hue never moves.
-		const fill = tones[shape.tone]?.line ?? tones[shape.tone]?.fill ?? theme.ribbon ?? "transparent";
-			const isHot = hotIndices.has(index);
+		// invisible — "where are all the ribbons?".
+		const isHot = hotIndices.has(index);
+		// ONE uniform shade from the first column to the last. A hot lane takes `lineHot`
+		// (the same hue held a little stronger) and is painted ONCE — never the road laid
+		// down twice, which stacked the alpha into a wild bright bend in the middle and
+		// read as "the line changes colour half-way". The hue never moves along the path.
+		const tone = tones[shape.tone];
+		const fill = isHot
+			? (tone?.lineHot ?? tone?.line ?? tone?.fill ?? theme.ribbon ?? "transparent")
+			: (tone?.line ?? tone?.fill ?? theme.ribbon ?? "transparent");
 			node.group.setAttribute("data-lane", shape.id);
 			node.group.setAttribute("data-hot", isHot ? "true" : "false");
 			// A band carries the tone of the ROWS it covers: one row of a lane that breaks
@@ -747,16 +814,11 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 			// own wash. The BANDS themselves are painted once, in the wash layer above; a lane
 			// here owns its ribbons, its caption and its hover.
 			const children: SVGElement[] = [];
-			// A hot lane is the SAME fill laid down twice: alpha adds up, the hue does not
-			// move. Changing the colour under the pointer made the ribbons look like a
-			// different lane, which is the opposite of "this is the one you pointed at".
-			for (let copy = 0; copy < (isHot ? 2 : 1); copy += 1) {
-				for (const ribbon of shape.ribbons) {
-					const path = document.createElementNS(NS, "path");
-					path.setAttribute("d", ribbon.path);
-					path.setAttribute("fill", fill);
-					children.push(path);
-				}
+			for (const ribbon of shape.ribbons) {
+				const path = document.createElementNS(NS, "path");
+				path.setAttribute("d", ribbon.path);
+				path.setAttribute("fill", fill);
+				children.push(path);
 			}
 			// REPLACED, not appended: a lane owns one fixed set of nodes, so a board that
 			// has been scrolled for an hour owns exactly as many paths as it did at first.

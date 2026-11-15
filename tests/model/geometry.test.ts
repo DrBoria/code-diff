@@ -74,6 +74,29 @@ describe("connectionShape ribbons", () => {
 	});
 });
 
+describe("connectionShape tone coherence", () => {
+	it("a lane takes the tone of the rows it joins (no red road over green bands)", () => {
+		const lookup = lookupOf({ "0": { "1": 0 }, "1": { "1": 0 } });
+		// The owner labelled the lane `same`, but every row it names is `differs`.
+		const toneOf = () => "differs";
+		const shape = connectionShape(conn([{ column: "0", items: ["1"] }, { column: "1", items: ["1"] }], { tone: "same" }), columns, lookup, 0, toneOf);
+		expect(shape?.tone).toBe("differs");
+	});
+
+	it("keeps the owner's tone when the rows disagree", () => {
+		const lookup = lookupOf({ "0": { "1": 0, "2": 1 }, "1": { "1": 0, "2": 1 } });
+		const toneOf = (column: string, id: string) => (id === "1" ? "differs" : "same");
+		const shape = connectionShape(conn([{ column: "0", items: ["1", "2"] }, { column: "1", items: ["1", "2"] }], { tone: "same" }), columns, lookup, 0, toneOf);
+		expect(shape?.tone).toBe("same");
+	});
+
+	it("keeps the owner's tone when no row carries one", () => {
+		const lookup = lookupOf({ "0": { "1": 0 }, "1": { "1": 0 } });
+		const shape = connectionShape(conn([{ column: "0", items: ["1"] }, { column: "1", items: ["1"] }], { tone: "same" }), columns, lookup, 0, () => null);
+		expect(shape?.tone).toBe("same");
+	});
+});
+
 describe("shapesOf dip containment", () => {
 	it("never pushes a ribbon below the board's columns", () => {
 		// A short board (bottom = 200) with many lanes over the same rows: the slot
