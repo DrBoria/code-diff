@@ -9,13 +9,43 @@
 // Changed/added/removed runs become ONE ribbon per hunk.
 
 import { diffLines } from "../index.js";
-import type { Column, Connection, Item, Segment } from "../interface/types.js";
+import type { ChangeNote, Column, Connection, Item, Segment } from "../interface/types.js";
 
 const segmentsOf = (cell: { text?: string; words?: readonly { text: string; changed: boolean }[] } | null): Segment[] | undefined => {
 	if (!cell) return undefined;
 	if (cell.words) return cell.words.map((w) => ({ text: w.text, paint: w.changed }));
 	if (cell.text !== undefined) return [{ text: cell.text }];
 	return undefined;
+};
+
+const textOf = (cell: { text?: string; words?: readonly { text: string; changed: boolean }[] } | null): string => {
+	if (!cell) return "";
+	if (cell.words) return cell.words.map((w) => w.text).join("");
+	return cell.text ?? "";
+};
+
+/**
+ * WHAT HAPPENED on a changed row, written under the code line. A changed line is a
+ * REPLACEMENT: the explanation names the tokens that went away and the tokens that
+ * arrived, so the reader sees "replaced `money` with `cash`" instead of two painted
+ * ranges with no story. A one-sided row is an addition or a removal.
+ */
+const changeNote = (type: string, a: { text?: string; words?: readonly { text: string; changed: boolean }[] } | null, b: { text?: string; words?: readonly { text: string; changed: boolean }[] } | null): ChangeNote | undefined => {
+	if (type === "add") return { text: "added", tone: "added" };
+	if (type === "remove") return { text: "removed", tone: "removed" };
+	if (type !== "change") return undefined;
+	const removed = (a?.words ?? []).filter((w) => w.changed).map((w) => w.text.trim()).filter(Boolean);
+	const added = (b?.words ?? []).filter((w) => w.changed).map((w) => w.text.trim()).filter(Boolean);
+	const quote = (parts: string[]): string => parts.map((p) => `\`${p}\``).join(" ");
+	if (removed.length > 0 && added.length > 0) return { text: `replaced ${quote(removed)} with ${quote(added)}`, tone: "differs" };
+	if (added.length > 0) return { text: `added ${quote(added)}`, tone: "added" };
+	if (removed.length > 0) return { text: `removed ${quote(removed)}`, tone: "removed" };
+	// A change with no token-level diff (a whole-line rewrite above the token limit):
+	// name the two texts so the reader still sees what was replaced.
+	const from = textOf(a).trim();
+	const to = textOf(b).trim();
+	if (from && to) return { text: `replaced \`${from}\` with \`${to}\``, tone: "differs" };
+	return { text: "changed", tone: "differs" };
 };
 
 export interface GitBoard {
@@ -71,9 +101,13 @@ export const gitBoard = (before: string, after: string, context = 3): GitBoard =
 			return;
 		}
 
-		const tone = "differs";
-		if (a) left.push({ id: lid, plate: String(a.no), tone, segments: segmentsOf(a) });
-		if (b) right.push({ id: rid, plate: String(b.no), tone, segments: segmentsOf(b) });
+		// The tone follows the row's own verdict: a replacement is `differs`, a pure
+		// addition is `added`, a pure removal is `removed` — the same colour the
+		// explanation under the line is written in.
+		const tone = row.type === "add" ? "added" : row.type === "remove" ? "removed" : "differs";
+		const note = changeNote(row.type, a, b);
+		if (a) left.push({ id: lid, plate: String(a.no), tone, segments: segmentsOf(a), ...(note === undefined ? {} : { change: note }) });
+		if (b) right.push({ id: rid, plate: String(b.no), tone, segments: segmentsOf(b), ...(note === undefined ? {} : { change: note }) });
 		if (hunk === null) hunk = { left: [], right: [], tone };
 		if (a) hunk.left.push(lid);
 		if (b) hunk.right.push(rid);

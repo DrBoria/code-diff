@@ -20,11 +20,75 @@ import { Virtual } from "../surface/Virtual.js";
 /** One row's height: every row in this list is one line of the board. */
 const ROW_HEIGHT = 18;
 
-const Entry = styled.div`
+const Entry = styled.div<{ $selected?: boolean }>`
 	/* Every row is as wide as the WIDEST row, not just its own text: a sticky
 	   plate can only slide inside its own row, so a short row must still reach the
 	   right edge or its number detaches and scrolls away with the text. */
 	width: 100%;
+	position: relative;
+	/* A selected row carries a left edge mark — the "this row is staged" cue. It is
+	   drawn on the entry, not the wash, so it survives any tone. */
+	${(p) => (p.$selected === true ? `box-shadow: inset 3px 0 0 ${p.theme.text};` : "")}
+`;
+
+/* The explanation of what changed, drawn UNDER the code line (a second line of the
+   same row). The row grows to fit it; the virtual list measures the real height, so
+   ribbons still attach to the code line, not to the explanation. */
+const Change = styled.div<{ $ink?: string }>`
+	padding: 0 8px 2px 52px;
+	font: italic 10.5px/14px ${(p) => p.theme.mono};
+	color: ${(p) => p.$ink ?? p.theme.dim};
+	white-space: pre-wrap;
+	word-break: break-word;
+`;
+
+/* The action gutter: a button per configured action, on the right edge of the row.
+   The view draws icon + label and reports the click; it never decides the action. */
+const Gutter = styled.span`
+	position: absolute;
+	top: 0;
+	right: 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	height: 18px;
+	padding: 0 2px;
+	z-index: 3;
+`;
+
+const ActionButton = styled.button`
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 16px;
+	padding: 0;
+	border: 1px solid ${(p) => p.theme.edge};
+	border-radius: 3px;
+	background: ${(p) => p.theme.panel};
+	color: ${(p) => p.theme.text};
+	font: 10px/1 ${(p) => p.theme.mono};
+	cursor: pointer;
+	&:hover { background: ${(p) => p.theme.edge}; }
+	&:disabled { opacity: 0.4; cursor: default; }
+`;
+
+/* The selection checkbox: a small square on the left of the plate. Clicking it
+   toggles the row in the controller's selection without triggering a row click. */
+const SelectBox = styled.button<{ $on?: boolean }>`
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 13px;
+	height: 13px;
+	padding: 0;
+	border: 1px solid ${(p) => (p.$on === true ? p.theme.text : p.theme.edge)};
+	border-radius: 3px;
+	background: ${(p) => (p.$on === true ? p.theme.text : "transparent")};
+	color: ${(p) => p.theme.paper};
+	font: 9px/1 ${(p) => p.theme.mono};
+	cursor: pointer;
+	z-index: 3;
 `;
 
 const Plate = styled.span<{ $mirrored: boolean }>`
@@ -189,25 +253,34 @@ const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], i
 	// A standing mark takes ITS ROW'S tone paint, not one flat theme colour: a unique
 	// (green) value must read green on the word itself, not red on a green row.
 	const rowPaint = it.tone === undefined ? undefined : tones?.[it.tone]?.paint;
+	// The explanation's ink: its own tone's line colour, else the row's, else dim.
+	const changeTone = it.change?.tone ?? it.tone;
+	const changeInk = changeTone === undefined ? undefined : tones?.[changeTone]?.line;
 
 	return (
-		<Row $rubber={rubber} $rowHeight={rowHeight} data-anchor={anchorOf(it)}>
-			{it.plate === undefined ? null : <Plate $mirrored={column.mirrored === true}>{it.plate}</Plate>}
-			<Line $mirrored={column.mirrored === true} $rubber={rubber} $indent={it.indent ?? 0}>
-				{/* The ANCHOR is the ROW, not the text inside it: a band measured on the line
-				    box was 13px tall inside an 18px row, so the wash was a stripe with gaps and
-				    a ribbon met a band thinner than the row it joins. */}
-				<Text $rubber={rubber} $parent={it.blockParent === true}>
-					{(segments ?? []).map((segment, at) => piece(segment, at, rowPaint))}
-					{segments === undefined ? <span>{String(it.id)}</span> : null}
-					{(it.notes ?? []).map((note, at) => (
-						<NoteAnchor key={`note-${at}`} style={{ left: `${note.from}ch` }}>
-							<Note title={note.title}>{note.text}</Note>
-						</NoteAnchor>
-					))}
-				</Text>
-			</Line>
-		</Row>
+		<>
+			<Row $rubber={rubber} $rowHeight={rowHeight} data-anchor={anchorOf(it)}>
+				{it.plate === undefined ? null : <Plate $mirrored={column.mirrored === true}>{it.plate}</Plate>}
+				<Line $mirrored={column.mirrored === true} $rubber={rubber} $indent={it.indent ?? 0}>
+					{/* The ANCHOR is the ROW, not the text inside it: a band measured on the line
+					    box was 13px tall inside an 18px row, so the wash was a stripe with gaps and
+					    a ribbon met a band thinner than the row it joins. */}
+					<Text $rubber={rubber} $parent={it.blockParent === true}>
+						{(segments ?? []).map((segment, at) => piece(segment, at, rowPaint))}
+						{segments === undefined ? <span>{String(it.id)}</span> : null}
+						{(it.notes ?? []).map((note, at) => (
+							<NoteAnchor key={`note-${at}`} style={{ left: `${note.from}ch` }}>
+								<Note title={note.title}>{note.text}</Note>
+							</NoteAnchor>
+						))}
+					</Text>
+				</Line>
+			</Row>
+			{/* WHAT HAPPENED, under the code line: "replaced X with Y", "added", "removed",
+			    "moved from line N". The row grows to fit it; the virtual list measures the
+			    real height, so the ribbon still attaches to the code line above. */}
+			{it.change === undefined ? null : <Change {...(changeInk === undefined ? {} : { $ink: changeInk })}>{it.change.text}</Change>}
+		</>
 	);
 };
 
@@ -217,10 +290,13 @@ const content = <Data,>(it: Item<Data>, column: RendererProps<Data>["column"], i
  * Visibility is the board's decision (it passed `connected`), so the data source
  * never has to say which lines are folds.
  */
-export const Items = <Data,>({ column, render, onAction, connected, expanded = false, onReveal, onLayout, highlight, fit, tokenize, options, tones }: RendererProps<Data>): ReactElement => {
+export const Items = <Data,>({ column, render, onAction, connected, expanded = false, onReveal, onLayout, highlight, fit, tokenize, options, tones, selected, onToggleSelect, actions, onRowAction }: RendererProps<Data>): ReactElement => {
 	const rubber = fit === "rubber";
 	const rowHeight = options?.rowHeight ?? ROW_HEIGHT;
 	const items = column.items ?? [];
+	// The row-scoped actions: a gutter button per action on each row. The view draws
+	// icon + label and reports the click; the controller performs it.
+	const rowActions = (actions ?? []).filter((action) => (action.scope ?? "row") === "row");
 	const shownAt = (it: Item<Data>): boolean => expanded || connected === undefined || connected.has(String(it.id));
 	// WHAT is drawn, in board order — one entry per row, computed once. The ELEMENTS are
 	// built only for the rows the window mounts (`renderRow`), so a column of 500 lines
@@ -267,9 +343,48 @@ export const Items = <Data,>({ column, render, onAction, connected, expanded = f
 			);
 		}
 
+		const id = String(slot.item.id);
+		const isSelected = selected?.has(id) === true;
+
 		return (
-			<Entry key={String(slot.item.id)} data-item={String(slot.item.id)}>
+			<Entry key={id} data-item={id} $selected={isSelected}>
+				{/* The selection checkbox: toggles the row in the controller's selection.
+				    It stops propagation so it is not also read as a row click. */}
+				{onToggleSelect === undefined ? null : (
+					<SelectBox
+						type="button"
+						$on={isSelected}
+						data-action="select"
+						title={isSelected ? "deselect row" : "select row"}
+						onClick={(event) => {
+							event.stopPropagation();
+							onToggleSelect(id);
+						}}
+					>
+						{isSelected ? "✓" : ""}
+					</SelectBox>
+				)}
 				{content(slot.item, column, slot.index, render, onAction, rubber, tokenize, highlight, rowHeight, tones)}
+				{/* The action gutter: a button per configured row action. */}
+				{rowActions.length === 0 ? null : (
+					<Gutter>
+						{rowActions.map((action) => (
+							<ActionButton
+								key={action.id}
+								type="button"
+								data-action={action.id}
+								title={action.label}
+								disabled={action.disabled?.({ column: column.id, item: id }) === true}
+								onClick={(event) => {
+									event.stopPropagation();
+									onRowAction?.(action, id);
+								}}
+							>
+								{action.icon ?? action.label.slice(0, 1)}
+							</ActionButton>
+						))}
+					</Gutter>
+				)}
 			</Entry>
 		);
 	};

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
 import styled, { ThemeProvider } from "styled-components";
-import type { Column, Connection, Fit, LaneMark, Renderer, Theme, ViewProps } from "../interface/types.js";
+import type { BoardAction, Column, Connection, Fit, LaneMark, Renderer, RowRef, Theme, ViewProps } from "../interface/types.js";
 import { layoutColumn, layoutLookup, measureLayout, readScrollTops, type Layout } from "../geometry/measure.js";
 import { anchorOf } from "../columns/column.js";
 import { shapesOf, type ToneLookup } from "../geometry/ribbon.js";
@@ -58,6 +58,41 @@ const Cell = styled.div<{ $cap: boolean; $bounded: boolean }>`
 
 const Corridor = styled.div`
 	min-width: 0;
+`;
+
+/* The action toolbar: a strip above the board holding the owner's toolbar-scoped
+   actions (apply-left, apply-right, stage, …). The view draws icon + label and
+   reports the click; the controller performs it. */
+const Toolbar = styled.div`
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 8px;
+	border-bottom: 1px solid ${(p) => p.theme.edge};
+	background: ${(p) => p.theme.panel};
+	font-family: ${(p) => p.theme.mono};
+	font-size: 11px;
+`;
+
+const ToolbarButton = styled.button`
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 3px 9px;
+	border: 1px solid ${(p) => p.theme.edge};
+	border-radius: 5px;
+	background: ${(p) => p.theme.paper};
+	color: ${(p) => p.theme.text};
+	font: inherit;
+	cursor: pointer;
+	&:hover { background: ${(p) => p.theme.edge}; }
+	&:disabled { opacity: 0.4; cursor: default; }
+`;
+
+const ToolbarCount = styled.span`
+	margin-left: auto;
+	color: ${(p) => p.theme.dim};
 `;
 
 // THE LAYER IS IMPERATIVE. Its children are written by `paint()`, never reconciled:
@@ -164,6 +199,9 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	// The row under the pointer: a column id and an item id. Only ids — the same
 	// currency the connections are written in.
 	const [hover, setHover] = useState<{ column: string; item: string; char?: number } | null>(null);
+	// The last hover, read synchronously by the pointer handler so `onRowHover` fires
+	// once per row change (never inside a state updater).
+	const hoverRef = useRef<{ column: string; item: string; char?: number } | null>(null);
 	// The LANE under the pointer: the connection's own index. A lane is how the reader
 	// says "this row and that row are the same thing", so the pointer names a LANE and
 	// the highlight is the occurrence that lane stands for.
@@ -173,6 +211,11 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	// own this state (`controller.picked`); otherwise the view keeps it internally.
 	const [internalPicked, setPicked] = useState<{ column: string; item: string } | null>(null);
 	const picked = controller?.picked !== undefined ? controller.picked : internalPicked;
+	// The SELECTED rows (controlled): independent of the focused chain. A reader can
+	// select rows 1, 2, 5, 7 and stage them while 4 and 6 stay out. The view draws a
+	// selection mark and reports toggles; the controller owns the set.
+	const selected = controller?.selected ?? [];
+	const selectedSet = useMemo(() => new Set(selected.map((ref) => `${ref.column}\u0000${ref.item}`)), [selected]);
 	const root = useRef<HTMLDivElement | null>(null);
 	const layer = useRef<SVGSVGElement | null>(null);
 	// Pointer moves are coalesced to at most one update per frame (see onPointerOver).
@@ -191,7 +234,13 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 	// from re-measuring a hundred lanes on every pointer move.
 	const shapeCache = useRef<{ key: string; placed: ReturnType<typeof shapesOf> } | null>(null);
 
-	// The owner may switch the initial state while mounted (a "show all" chip).
+	// REVEAL, controlled or internal. When the controller owns it (`controller.reveal`
+	// is not undefined) the view shows EXACTLY that state — the owner's "only blocks /
+	// show all" chip and the board can never disagree, and a toggle always recomputes
+	// the layout (the measure effect keys on `revealed`). Otherwise the `reveal` prop
+	// is the initial state and the view owns it internally.
+	const controlledReveal = controller?.reveal;
+	const revealedNow = controlledReveal !== undefined ? controlledReveal : revealed;
 	useEffect(() => setRevealed(reveal), [reveal]);
 
 	// A different board (another tab, another pair) has different connections: a pick
@@ -274,7 +323,7 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 			if (frame !== 0) cancelAnimationFrame(frame);
 			clearTimeout(timer);
 		};
-	}, [boardKey, revealed, picked, measure]);
+	}, [boardKey, revealedNow, picked, measure]);
 
 	// SCROLL → REPAINT. No state, no measurement: the offset is the only thing that
 	// moved, and every box is `content position − scroll offset`.
@@ -681,25 +730,57 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		//
 		// A lane's band says "these rows are on this lane". Nested lanes cover the SAME
 		// rows (`return` ⊃ `call` ⊃ `func`), and a transparent fill is not idempotent —
-		// five copies of the wash turned a row white. So the SPANS are merged per column
-		// and tone, and each merged span is painted exactly once.
+		// five copies of the wash turned a row white. So every row is painted EXACTLY
+		// ONCE: the spans are merged per column, and a row that is hot (the pointed-at
+		// lane, or the hovered block's header) takes the `hot` fill INSTEAD of the base
+		// fill, never on top of it. No alpha ever stacks.
 		type Span = { top: number; bottom: number };
 		type SpanSet = { column: string; tone: string; spans: Span[] };
 		const spansOf = new Map<string, SpanSet>();
-		// The ONE lane under the pointer, kept apart: its rows are painted a second time,
-		// on top, in the `hot` fill.
 		const hotSpansOf = new Map<string, SpanSet>();
+		const addSpan = (target: Map<string, SpanSet>, column: string, tone: string, span: Span): void => {
+			const key = `${column}\u0000${tone}`;
+			const entry = target.get(key) ?? { column, tone, spans: [] };
+			entry.spans.push(span);
+			target.set(key, entry);
+		};
 		for (const { index, shape } of placed) {
 			const hot = hotIndices.has(index);
 			for (const band of shape.bands) {
-				const tone = band.tone ?? shape.tone;
-				const key = `${band.column}\u0000${tone}`;
-				const target = hot ? hotSpansOf : spansOf;
-				const entry = target.get(key) ?? { column: band.column, tone, spans: [] };
-				entry.spans.push({ top: band.top, bottom: band.bottom });
-				target.set(key, entry);
+				addSpan(hot ? hotSpansOf : spansOf, band.column, band.tone ?? shape.tone, { top: band.top, bottom: band.bottom });
 			}
 		}
+
+		// ── THE HOVERED BLOCKS ──────────────────────────────────────────────────
+		//
+		// A block is one unit (a header + its members). When the pointer is on any of
+		// its rows, the WHOLE block is washed in every column it names — the parent
+		// included — AND every ancestor block up the tree. The primary (most specific)
+		// block's rows are HOT; ancestors take the base fill. Each row is still painted
+		// once: a hot row is removed from the base set below, not layered over it.
+		if (hoveredBlocks.length > 0) {
+			for (let depth = hoveredBlocks.length - 1; depth >= 0; depth -= 1) {
+				const blockId = hoveredBlocks[depth];
+				if (blockId === undefined) continue;
+				const perColumn = blockRows.rowsOfBlock.get(blockId);
+				const parents = blockRows.parentsOfBlock.get(blockId) ?? new Set<string>();
+				if (perColumn === undefined) continue;
+				const blockTone = blockRows.toneOfBlock.get(blockId) ?? "same";
+				const isPrimary = depth === 0;
+				for (const [column, ids] of perColumn) {
+					for (const id of ids) {
+						const box = lookup(column, id);
+						if (box === null) continue;
+						const span = { top: box.top, bottom: box.bottom };
+						// The primary block (and any block's header) is hot; ancestor members
+						// take the base fill. Either way the row is painted once.
+						const hot = isPrimary || parents.has(`${column}\u0000${id}`);
+						addSpan(hot ? hotSpansOf : spansOf, column, blockTone, span);
+					}
+				}
+			}
+		}
+
 		const mergedSpans = (spans: readonly Span[]): Span[] => {
 			const sorted = [...spans].sort((a, b) => a.top - b.top);
 			let current: Span | null = null;
@@ -715,6 +796,24 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 
 			return merged;
 		};
+		// Subtract the hot spans from a base span so a hot row is never painted twice.
+		const minusSpans = (span: Span, holes: readonly Span[]): Span[] => {
+			let pieces: Span[] = [{ ...span }];
+			for (const hole of holes) {
+				const next: Span[] = [];
+				for (const piece of pieces) {
+					if (hole.bottom <= piece.top || hole.top >= piece.bottom) {
+						next.push(piece);
+						continue;
+					}
+					if (hole.top > piece.top) next.push({ top: piece.top, bottom: hole.top });
+					if (hole.bottom < piece.bottom) next.push({ top: hole.bottom, bottom: piece.bottom });
+				}
+				pieces = next;
+			}
+
+			return pieces;
+		};
 		const bandPaths = (column: string, spans: readonly Span[], fill: string): SVGElement[] => {
 			const box = ribbonColumns.find((entry) => entry.id === column)?.box ?? null;
 			if (box === null) return [];
@@ -727,47 +826,20 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 				return path;
 			});
 		};
+		// The hot spans per column, merged: what the base wash must NOT cover.
+		const hotByColumn = new Map<string, Span[]>();
+		for (const { column, spans } of hotSpansOf.values()) {
+			hotByColumn.set(column, [...(hotByColumn.get(column) ?? []), ...mergedSpans(spans)]);
+		}
 		const bandChildren: SVGElement[] = [];
-		for (const { column, tone, spans } of spansOf.values()) bandChildren.push(...bandPaths(column, spans, tones[tone]?.fill ?? "transparent"));
-		// LAST, so it lands on top: the pointed-at lane's rows in the stronger fill.
+		for (const { column, tone, spans } of spansOf.values()) {
+			const holes = hotByColumn.get(column) ?? [];
+			const base = mergedSpans(spans).flatMap((span) => minusSpans(span, holes));
+			bandChildren.push(...bandPaths(column, base, tones[tone]?.fill ?? "transparent"));
+		}
+		// The hot rows, painted ONCE in the stronger fill (the base was cut away above).
 		for (const { column, tone, spans } of hotSpansOf.values()) bandChildren.push(...bandPaths(column, spans, tones[tone]?.hot ?? tones[tone]?.fill ?? "transparent"));
 
-		// ── THE HOVERED BLOCKS ──────────────────────────────────────────────────
-		//
-		// A block is one unit (a header + its members). When the pointer is on any of
-		// its rows, the WHOLE block is washed in every column it names — the parent
-		// included — AND every ancestor block up the tree, so the reader sees the
-		// component's whole subtree and the chain of containers it sits in. The
-		// primary (most specific) block is washed strongest; ancestors lighter; each
-		// block's parent header stronger than its members.
-		if (hoveredBlocks.length > 0) {
-			for (let depth = hoveredBlocks.length - 1; depth >= 0; depth -= 1) {
-				const blockId = hoveredBlocks[depth];
-				if (blockId === undefined) continue;
-				const perColumn = blockRows.rowsOfBlock.get(blockId);
-				const parents = blockRows.parentsOfBlock.get(blockId) ?? new Set<string>();
-				if (perColumn === undefined) continue;
-				const blockTone = blockRows.toneOfBlock.get(blockId) ?? "same";
-				// The primary block (depth 0) is the hot fill; ancestors fade toward the
-				// base fill so the pointed-at subtree reads first, its containers behind.
-				const isPrimary = depth === 0;
-				const memberFill = isPrimary ? (tones[blockTone]?.hot ?? tones[blockTone]?.fill ?? "transparent") : (tones[blockTone]?.fill ?? "transparent");
-				const parentFill = tones[blockTone]?.hot ?? tones[blockTone]?.fill ?? "transparent";
-				for (const [column, ids] of perColumn) {
-					const memberSpans: Span[] = [];
-					const parentSpans: Span[] = [];
-					for (const id of ids) {
-						const box = lookup(column, id);
-						if (box === null) continue;
-						const span = { top: box.top, bottom: box.bottom };
-						if (parents.has(`${column}\u0000${id}`)) parentSpans.push(span);
-						else memberSpans.push(span);
-					}
-					bandChildren.push(...bandPaths(column, memberSpans, memberFill));
-					bandChildren.push(...bandPaths(column, parentSpans, parentFill));
-				}
-			}
-		}
 		if (bandLayer.current === null) {
 			bandLayer.current = document.createElementNS(NS, "g");
 			svg.append(bandLayer.current);
@@ -794,18 +866,15 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 				svg.append(group, caption);
 			}
 
-		// The RIBBON is a thin LINE, not a filled slab: a stroked centreline from one
-		// block to the other. A filled band read as a bright block in the corridor ("what
-		// is this bright thing?"); a 1.5px road reads as a connection. It takes the tone's
-		// `line` colour so the path is visible on a dark surface without shouting.
+		// The RIBBON is the SAME band as the row wash it joins: same colour (`fill`),
+		// same height, from the first column to the last. It is filled, never stroked —
+		// a thin wire read as "a zero-width line in a strange format", and a brighter
+		// slab read as "what is this bright thing?". One calm, continuous band.
 		const isHot = hotIndices.has(index);
-		// ONE uniform shade from the first column to the last. A hot lane takes `lineHot`
-		// (the same hue held a little stronger) and a slightly heavier stroke — never a
-		// different colour, never a doubled paint. The hue never moves along the path.
 		const tone = tones[shape.tone];
-		const stroke = isHot
-			? (tone?.lineHot ?? tone?.line ?? tone?.fill ?? theme.ribbon ?? "transparent")
-			: (tone?.line ?? tone?.fill ?? theme.ribbon ?? "transparent");
+		// ONE uniform shade, hot or not: the road never changes colour on hover. Hover
+		// lights the ROW wash (`hot`) and the caption; the ribbon stays `fill`.
+		const fill = tone?.fill ?? theme.ribbon ?? "transparent";
 			node.group.setAttribute("data-lane", shape.id);
 			node.group.setAttribute("data-hot", isHot ? "true" : "false");
 			// A band carries the tone of the ROWS it covers: one row of a lane that breaks
@@ -814,21 +883,11 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 			// here owns its ribbons, its caption and its hover.
 			const children: SVGElement[] = [];
 			for (const ribbon of shape.ribbons) {
-				// A wide TRANSPARENT stroke under the line: the hit area a pointer can land
-				// on, so a 1.5px road is still easy to hover and click. It draws nothing.
-				const hit = document.createElementNS(NS, "path");
-				hit.setAttribute("d", ribbon.path);
-				hit.setAttribute("fill", "none");
-				hit.setAttribute("stroke", "transparent");
-				hit.setAttribute("stroke-width", "12");
-				children.push(hit);
-				// The visible road: one thin stroke, round caps, no fill.
+				// The visible band: filled in the row wash colour, one continuous shape.
 				const path = document.createElementNS(NS, "path");
 				path.setAttribute("d", ribbon.path);
-				path.setAttribute("fill", "none");
-				path.setAttribute("stroke", stroke);
-				path.setAttribute("stroke-width", isHot ? "2.5" : "1.5");
-				path.setAttribute("stroke-linecap", "round");
+				path.setAttribute("fill", fill);
+				path.setAttribute("stroke", "none");
 				children.push(path);
 			}
 			// REPLACED, not appended: a lane owns one fixed set of nodes, so a board that
@@ -901,6 +960,14 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		const char = charAt(anchor instanceof HTMLElement ? anchor : null, x, y);
 		const next = id === undefined ? null : char === undefined ? { column, item: id } : { column, item: id, char };
 		setLaneHover(null);
+		// Report the row hover out (in addition to the built-in lane highlight), only when
+		// the ROW changes — not on every character move within it. Done here, outside the
+		// state updater, so it is never a side effect during render.
+		const prev = hoverRef.current;
+		if (prev?.column !== next?.column || prev?.item !== next?.item) {
+			controller?.onRowHover?.(next === null ? null : { column: next.column, item: next.item });
+		}
+		hoverRef.current = next;
 		setHover((current) => (current?.column === next?.column && current?.item === next?.item && current?.char === next?.char ? current : next));
 	};
 	const onPointerOver = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -934,16 +1001,33 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		controller?.onPick?.(value);
 	};
 
+	// Toggle a row in the selection and report the new set out. Selection is the
+	// controller's state; the view only draws the mark and reports the toggle.
+	const toggleSelect = (ref: { column: string; item: string }): void => {
+		const key = `${ref.column}\u0000${ref.item}`;
+		const next = selectedSet.has(key) ? selected.filter((entry) => `${entry.column}\u0000${entry.item}` !== key) : [...selected, ref];
+		controller?.onSelect?.(next);
+	};
+
 	const onClick = (event: ReactPointerEvent<HTMLDivElement>): void => {
 		const target = event.target as HTMLElement;
 		if (target.closest("svg") !== null) return;
+		// An action button (gutter or toolbar) is handled by its own onClick; the board
+		// must not also read it as a row click.
+		if (target.closest("[data-action]") !== null) return;
 		const cell = target.closest("[data-column]");
 		const stamp = cell instanceof HTMLElement ? cell.dataset.column : undefined;
 		if (stamp === undefined) return;
 		const row = target.closest("[data-item]");
 		if (row instanceof HTMLElement && row.dataset.item !== undefined) {
 			const ref = { column: stamp, item: row.dataset.item };
-			controller?.onRowClick?.(ref);
+			// A controller's onRowClick REPLACES the built-in filter: the owner decides
+			// what a click means (select, stage, open, …). Omit it to keep click-to-filter.
+			if (controller?.onRowClick !== undefined) {
+				controller.onRowClick(ref);
+
+				return;
+			}
 			pick(ref);
 		}
 	};
@@ -986,8 +1070,34 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 		if (end !== undefined) pick({ column: end.column, item: String(end.items[0]) });
 	};
 
+	// An action button was clicked (gutter or toolbar). The view reports the action,
+	// its target row (or null for a toolbar action), and the current selection; the
+	// controller performs it. The view never decides what an action means.
+	const runAction = (action: BoardAction, ref: RowRef | null): void => {
+		action.onAction(ref, selected);
+	};
+	const toolbarActions = (controller?.actions ?? []).filter((action) => action.scope === "toolbar");
+
 	return (
 		<ThemeProvider theme={theme}>
+			{toolbarActions.length === 0 ? null : (
+				<Toolbar>
+					{toolbarActions.map((action) => (
+						<ToolbarButton
+							key={action.id}
+							type="button"
+							data-action={action.id}
+							title={action.label}
+							disabled={action.disabled?.(null) === true}
+							onClick={() => runAction(action, null)}
+						>
+							{action.icon}
+							<span>{action.label}</span>
+						</ToolbarButton>
+					))}
+					{selected.length > 0 ? <ToolbarCount>{selected.length} selected</ToolbarCount> : null}
+				</Toolbar>
+			)}
 			<Frame
 				ref={root}
 				style={sized > 0 ? { minHeight: `${Math.ceil(sized)}px` } : undefined}
@@ -1021,7 +1131,7 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 									{...(render === undefined ? {} : { render })}
 									{...(onAction === undefined ? {} : { onAction })}
 									{...(linkSet === undefined || foldHere === false ? {} : { connected: linkSet })}
-									expanded={revealed}
+									expanded={revealedNow}
 									onLayout={measure}
 									{...(highlights.has(column.id) ? { highlight: highlights.get(column.id) } : {})}
 									onReveal={() => {
@@ -1033,6 +1143,10 @@ export const Surface = <Data,>({ columns, connections = [], blocks = [], corrido
 									{...(tokenize === undefined ? {} : { tokenize })}
 									tones={tones}
 									options={config}
+									{...(controller?.selected === undefined ? {} : { selected: new Set(selected.filter((ref) => ref.column === column.id).map((ref) => ref.item)) })}
+									{...(controller?.onSelect === undefined ? {} : { onToggleSelect: (id: string) => toggleSelect({ column: column.id, item: id }) })}
+									{...(controller?.actions === undefined ? {} : { actions: controller.actions })}
+									onRowAction={(action, id) => runAction(action, { column: column.id, item: id })}
 								/>
 							</Cell>
 							{corridor === undefined ? null : <Corridor data-corridor={index} />}

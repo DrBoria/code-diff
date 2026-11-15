@@ -154,20 +154,23 @@ const bandPath = (span: Span, left: number, right: number): string =>
 		"Z",
 	].join(" ");
 
-/** The vertical centre of a block: the row a thin line attaches to. */
-const centreOf = (box: Box): number => round((box.top + box.bottom) / 2);
-
 /**
- * A thin LINE between two blocks (used when a connection touches more than two
- * columns). One cubic bezier from the centre of one block to the centre of the
- * other — a road, not a filled slab. Stroked by the board, never filled.
+ * A FILLED band between two blocks (used when a connection touches more than two
+ * columns): the top edge curves from one block's top to the other's, the bottom
+ * edge curves back. One continuous band — the same height as the rows it joins at
+ * each end, the same colour as their wash. A one-to-many lane tapers from the tall
+ * end to the short end; it is never a thin wire.
  */
 const ribbonPath = (a: Box, ax: number, b: Box, bx: number): string => {
 	const mid = round((ax + bx) / 2);
-	const ay = centreOf(a);
-	const by = centreOf(b);
 
-	return `M ${round(ax)} ${ay} C ${mid} ${ay} ${mid} ${by} ${round(bx)} ${by}`;
+	return [
+		`M ${round(ax)} ${round(a.top)}`,
+		`C ${mid} ${round(a.top)} ${mid} ${round(b.top)} ${round(bx)} ${round(b.top)}`,
+		`L ${round(bx)} ${round(b.bottom)}`,
+		`C ${mid} ${round(b.bottom)} ${mid} ${round(a.bottom)} ${round(ax)} ${round(a.bottom)}`,
+		"Z",
+	].join(" ");
 };
 
 /** The vertical run two boxes share: how tall a band between them can be. */
@@ -200,29 +203,35 @@ const waistOf = (a: Box, b: Box, ax: number, bx: number, labelWidth = 0, dip = 0
 };
 
 /**
- * A thin LINE joining two blocks through the corridor: it leaves the centre of
- * one block, climbs to a FLAT plateau (where the caption sits), runs straight,
- * then descends to the centre of the other block. One open path, stroked by the
- * board — never a filled slab. The plateau is straight so scrolling never drags
- * the label; the curves only live near the columns.
- *
- * The climb turns over 45% of the run on each side instead of meeting in the
- * exact middle: the same shape, with the bend barely softened.
+ * A FILLED band joining two blocks through the corridor: it leaves the full height
+ * of one block, climbs to a FLAT plateau (where the caption sits), runs straight,
+ * then descends to the full height of the other block. One closed path, filled by
+ * the board in the SAME colour and height as the row wash — never a thin stroke,
+ * never a brighter slab. The plateau is straight so scrolling never drags the
+ * label; the curves only live near the columns.
  */
 const waistPath = (a: Box, ax: number, b: Box, bx: number, labelWidth = 0, dip = 0): string => {
-	const { midX, nodeY, plateau } = waistOf(a, b, ax, bx, labelWidth, dip);
-	const ay = centreOf(a);
-	const by = centreOf(b);
+	const { midX, nodeY, half, plateau } = waistOf(a, b, ax, bx, labelWidth, dip);
 	const pL = round(midX - plateau);
 	const pR = round(midX + plateau);
 	const runL = (pL - ax) * 0.45;
 	const runR = (bx - pR) * 0.45;
+	const nTop = round(nodeY - half);
+	const nBot = round(nodeY + half);
 
 	return [
-		`M ${round(ax)} ${ay}`,
-		`C ${round(ax + runL)} ${ay} ${round(pL - runL)} ${nodeY} ${pL} ${nodeY}`,
-		`L ${pR} ${nodeY}`,
-		`C ${round(pR + runR)} ${nodeY} ${round(bx - runR)} ${by} ${round(bx)} ${by}`,
+		// Top edge: left block top → plateau top → right block top.
+		`M ${round(ax)} ${round(a.top)}`,
+		`C ${round(ax + runL)} ${round(a.top)} ${round(pL - runL)} ${nTop} ${pL} ${nTop}`,
+		`L ${pR} ${nTop}`,
+		`C ${round(pR + runR)} ${nTop} ${round(bx - runR)} ${round(b.top)} ${round(bx)} ${round(b.top)}`,
+		// Right edge down.
+		`L ${round(bx)} ${round(b.bottom)}`,
+		// Bottom edge: right block bottom → plateau bottom → left block bottom.
+		`C ${round(bx - runR)} ${round(b.bottom)} ${round(pR + runR)} ${nBot} ${pR} ${nBot}`,
+		`L ${pL} ${nBot}`,
+		`C ${round(pL - runL)} ${nBot} ${round(ax + runL)} ${round(a.bottom)} ${round(ax)} ${round(a.bottom)}`,
+		"Z",
 	].join(" ");
 };
 
@@ -289,7 +298,7 @@ export const connectionShape = (
 			const labelWidth = (connection.label?.length ?? 0) * 6;
 			const { midX, nodeY, half } = waistOf(left.box, right.box, ax, bx, labelWidth, dip);
 
-			ribbons.push({ from: left.column, to: right.column, path: waistPath(left.box, ax, right.box, bx, labelWidth, dip) });
+			ribbons.push({ from: left.column, to: right.column, path: waistPath(left.box, ax, right.box, bx, labelWidth, dip), height: round(half * 2) });
 			// A plateau that already spans the shared rows is a SOLID band: nothing to
 			// separate, and nothing to dip — dipping it only threw the block below the rows.
 			solid = half * 2 >= overlapOf(left.box, right.box) - 2;
@@ -309,7 +318,7 @@ export const connectionShape = (
 
 			const fromX = boxOf(left.column)?.right ?? left.box.right;
 			const toX = boxOf(right.column)?.left ?? right.box.left;
-			ribbons.push({ from: left.column, to: right.column, path: ribbonPath(left.box, fromX, right.box, toX) });
+			ribbons.push({ from: left.column, to: right.column, path: ribbonPath(left.box, fromX, right.box, toX), height: round(Math.max(left.box.bottom - left.box.top, right.box.bottom - right.box.top)) });
 		}
 
 		const first = visible[0];

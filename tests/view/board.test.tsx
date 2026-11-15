@@ -3,7 +3,7 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { renderBoard, codeColumn } from "./helpers.js";
-import type { Connection } from "../../interface/types.js";
+import type { BoardAction, Connection, RowRef } from "../../interface/types.js";
 
 // The board is a generic N-column view. These verify it renders any number of
 // columns with any ids, shows the rows, and reports interactions to a controller
@@ -83,20 +83,116 @@ describe("connections name real ids only", () => {
 	});
 });
 
-describe("a hot ribbon is one uniform shade", () => {
-	it("paints the pointed-at lane ONCE, never the road laid down twice", () => {
+describe("a ribbon is the same band as the row wash", () => {
+	it("fills the ribbon in the row wash colour, hot or not — never a thin wire, never a brighter slab", () => {
 		const connection: Connection = { id: "c", tone: "same", ends: [{ column: "left", items: ["1"] }, { column: "right", items: ["1"] }] };
 		render(renderBoard({ columns: [codeColumn("left", ["a"]), codeColumn("right", ["a"])], connections: [connection] }));
 		const lane = document.querySelector('[data-lane="c"]') as SVGGElement;
 		expect(lane).toBeTruthy();
-		// Hover the lane: it becomes hot. jsdom has no layout, so the ribbon path may be
-		// empty — but the lane owns ONE visible stroke per ribbon (plus a transparent
-		// hit-area), never a doubled stack of the road itself.
+		const paths = [...lane.querySelectorAll("path")];
+		// One ribbon between two columns → one filled band.
+		expect(paths.length).toBe(1);
+		// The road is FILLED in the tone's wash colour (`fill`), the SAME colour as the
+		// rows it joins — never a stroke, never a brighter `line`/`lineHot` shade.
+		expect(paths[0]?.getAttribute("fill")).toBe("rgba(255,107,107,0.1)");
+		expect(paths[0]?.getAttribute("stroke")).toBe("none");
+		// Hover the lane: the ribbon stays the SAME colour (hover lights the row wash,
+		// not the road). A road that changes shade on hover is a different road.
 		fireEvent.pointerOver(lane);
-		const visible = [...lane.querySelectorAll("path")].filter((p) => p.getAttribute("stroke") !== "transparent");
-		// One ribbon between two columns → one visible line, hot or not.
-		expect(visible.length).toBeLessThanOrEqual(1);
-		// The road is a STROKE, never a filled slab.
-		for (const p of visible) expect(p.getAttribute("fill")).toBe("none");
+		const hot = [...lane.querySelectorAll("path")];
+		expect(hot[0]?.getAttribute("fill")).toBe("rgba(255,107,107,0.1)");
+	});
+});
+
+describe("external actions (the controller decides what a click means)", () => {
+	it("onRowClick REPLACES the built-in filter", () => {
+		const onRowClick = vi.fn();
+		const onPick = vi.fn();
+		const connection: Connection = { id: "c", ends: [{ column: "left", items: ["1"] }, { column: "right", items: ["1"] }] };
+		render(renderBoard({ columns: [codeColumn("left", ["a"]), codeColumn("right", ["a"])], connections: [connection], controller: { onRowClick, onPick } }));
+		fireEvent.click(document.querySelector('[data-column="left"] [data-item="1"]') as Element);
+		expect(onRowClick).toHaveBeenCalledWith({ column: "left", item: "1" });
+		// The built-in pick did NOT run: the owner replaced it.
+		expect(onPick).not.toHaveBeenCalled();
+	});
+
+	it("draws a row action button and reports the click with the row and selection", () => {
+		const onAction = vi.fn();
+		const action: BoardAction = { id: "stage", label: "Stage", icon: <span>+</span>, onAction };
+		render(renderBoard({ columns: [codeColumn("left", ["a"], { fold: false })], controller: { actions: [action], selected: [] } }));
+		const button = document.querySelector('[data-action="stage"]') as Element;
+		expect(button).toBeTruthy();
+		fireEvent.click(button);
+		expect(onAction).toHaveBeenCalledWith({ column: "left", item: "1" }, []);
+	});
+
+	it("draws a toolbar action and reports it with a null row", () => {
+		const onAction = vi.fn();
+		const action: BoardAction = { id: "apply-left", label: "Apply left", scope: "toolbar", onAction };
+		render(renderBoard({ columns: [codeColumn("left", ["a"], { fold: false })], controller: { actions: [action] } }));
+		const button = document.querySelector('[data-action="apply-left"]') as Element;
+		expect(button).toBeTruthy();
+		fireEvent.click(button);
+		expect(onAction).toHaveBeenCalledWith(null, []);
+	});
+
+	it("reports onRowHover when the row under the pointer changes", () => {
+		const onRowHover = vi.fn();
+		render(renderBoard({ columns: [codeColumn("left", ["a", "b"], { fold: false })], controller: { onRowHover } }));
+		fireEvent.pointerOver(document.querySelector('[data-column="left"] [data-item="1"]') as Element);
+		expect(onRowHover).toHaveBeenCalledWith({ column: "left", item: "1" });
+	});
+});
+
+describe("selection (independent of the focused chain)", () => {
+	it("draws a selection mark on selected rows and reports a toggle", () => {
+		const onSelect = vi.fn();
+		const selected: RowRef[] = [{ column: "left", item: "1" }];
+		render(renderBoard({ columns: [codeColumn("left", ["a", "b"], { fold: false })], controller: { selected, onSelect } }));
+		// Row 1 is selected: its checkbox is checked.
+		const boxes = [...document.querySelectorAll('[data-action="select"]')];
+		expect(boxes.length).toBe(2);
+		expect(boxes[0]?.textContent).toBe("✓");
+		expect(boxes[1]?.textContent).toBe("");
+		// Clicking row 2's checkbox adds it to the selection.
+		fireEvent.click(boxes[1] as Element);
+		expect(onSelect).toHaveBeenCalledWith([{ column: "left", item: "1" }, { column: "left", item: "2" }]);
+	});
+
+	it("a selection toggle is not also a row click", () => {
+		const onSelect = vi.fn();
+		const onRowClick = vi.fn();
+		render(renderBoard({ columns: [codeColumn("left", ["a"], { fold: false })], controller: { selected: [], onSelect, onRowClick } }));
+		fireEvent.click(document.querySelector('[data-action="select"]') as Element);
+		expect(onSelect).toHaveBeenCalled();
+		expect(onRowClick).not.toHaveBeenCalled();
+	});
+});
+
+describe("controlled reveal (only blocks / show all)", () => {
+	it("shows exactly the controller's reveal state and reports a fold-button toggle", () => {
+		const onReveal = vi.fn();
+		const connection: Connection = { id: "c", ends: [{ column: "left", items: ["2"] }, { column: "right", items: ["2"] }] };
+		const { rerender } = render(
+			renderBoard({ columns: [codeColumn("left", ["a", "b", "c"]), codeColumn("right", ["a", "b", "c"])], connections: [connection], controller: { reveal: false, onReveal } }),
+		);
+		// Folded: rows 1 and 3 are hidden behind a fold button; row 2 shows in both columns.
+		expect(screen.queryByText("a")).toBeNull();
+		expect(screen.getAllByText("b").length).toBe(2);
+		// The owner flips the chip to show-all: the board recomputes and shows every row.
+		rerender(renderBoard({ columns: [codeColumn("left", ["a", "b", "c"]), codeColumn("right", ["a", "b", "c"])], connections: [connection], controller: { reveal: true, onReveal } }));
+		expect(screen.getAllByText("a").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("c").length).toBeGreaterThan(0);
+	});
+});
+
+describe("change explanations (what happened, under the code line)", () => {
+	it("draws the change note under the row", () => {
+		const columns = [
+			{ id: "left", kind: "items" as const, items: [{ id: "1", plate: "1", text: "const money = 1", change: { text: 'replaced "money" with "cash"' } }] },
+			{ id: "right", kind: "items" as const, items: [{ id: "1", plate: "1", text: "const cash = 1" }] },
+		];
+		render(renderBoard({ columns }));
+		expect(screen.getByText('replaced "money" with "cash"')).toBeTruthy();
 	});
 });

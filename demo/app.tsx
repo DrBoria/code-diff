@@ -6,7 +6,7 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { CodeDiff } from "../view.js";
-import type { Column, Connection, Theme, Tones } from "../interface/types.js";
+import type { BoardAction, Column, Connection, RowRef, Theme, Tones } from "../interface/types.js";
 import { gitBoard } from "./git-board.js";
 import { itemsBefore, itemsAfter } from "./fixtures/git-items.js";
 
@@ -84,17 +84,33 @@ const many: { columns: Column[]; connections: Connection[] } = {
 };
 
 const fixtures = [
-	{ key: "git", title: "Git diff — Items.tsx (v0.4 → v0.5)", subtitle: `real history · ${git.counts.change ?? 0} changed · ${git.counts.add ?? 0} added · ${git.counts.remove ?? 0} removed`, columns: git.columns, connections: git.connections, corridors: [40], fold: true },
-	{ key: "rename", title: "Renamed copy — word marks", subtitle: "clampValue → boundNumber · only the differing tokens painted", columns: rename.columns, connections: rename.connections, corridors: [120], fold: false },
-	{ key: "merge", title: "Three-way merge", subtitle: "base / ours / theirs · conflict tone", columns: merge.columns, connections: merge.connections, corridors: [60, 60], fold: false },
-	{ key: "many", title: "One-to-many ribbons", subtitle: "a band of many rows tied to one row", columns: many.columns, connections: many.connections, corridors: [120], fold: false },
+	{ key: "git", title: "Git diff — Items.tsx (v0.4 → v0.5)", subtitle: `real history · ${git.counts.change ?? 0} changed · ${git.counts.add ?? 0} added · ${git.counts.remove ?? 0} removed`, columns: git.columns, connections: git.connections, corridors: [120], fold: true, sync: [{ columns: ["left", "right"], axis: "xy" as const }] },
+	{ key: "rename", title: "Renamed copy — word marks", subtitle: "clampValue → boundNumber · only the differing tokens painted", columns: rename.columns, connections: rename.connections, corridors: [120], fold: false, sync: [{ columns: ["left", "right"], axis: "xy" as const }] },
+	{ key: "merge", title: "Three-way merge", subtitle: "base / ours / theirs · conflict tone", columns: merge.columns, connections: merge.connections, corridors: [60, 60], fold: false, sync: [{ columns: ["base", "ours", "theirs"], axis: "xy" as const }] },
+	{ key: "many", title: "One-to-many ribbons", subtitle: "a band of many rows tied to one row", columns: many.columns, connections: many.connections, corridors: [120], fold: false, sync: [{ columns: ["src", "dst"], axis: "xy" as const }] },
 ];
 
 const App = () => {
 	const [active, setActive] = useState("git");
 	const [log, setLog] = useState<string[]>([]);
+	// The controller's state: the selected rows (staged for commit) and the reveal
+	// chip. The view draws them and reports changes; this component decides what they
+	// mean — exactly the external-controller contract the package promises.
+	const [selected, setSelected] = useState<RowRef[]>([]);
+	const [revealed, setRevealed] = useState(false);
 	const f = fixtures.find((x) => x.key === active) ?? fixtures[0];
 	const note = (s: string) => setLog((l) => [s, ...l].slice(0, 6));
+
+	// The actions the owner configures. The view draws icon + label and reports the
+	// click; this handler performs it. `apply-left/right/both` and `stage` are all the
+	// same shape — the package knows nothing about merging.
+	const actions: BoardAction[] = [
+		{ id: "apply-left", label: "Apply left", scope: "toolbar", icon: <span>←</span>, onAction: (_ref, sel) => note(`apply-left → ${sel.length} row(s)`) },
+		{ id: "apply-right", label: "Apply right", scope: "toolbar", icon: <span>→</span>, onAction: (_ref, sel) => note(`apply-right → ${sel.length} row(s)`) },
+		{ id: "apply-both", label: "Apply both", scope: "toolbar", icon: <span>⇄</span>, onAction: (_ref, sel) => note(`apply-both → ${sel.length} row(s)`) },
+		{ id: "stage", label: "Stage selection", scope: "toolbar", icon: <span>✓</span>, disabled: () => selected.length === 0, onAction: (_ref, sel) => note(`staged ${sel.length} row(s): ${sel.map((r) => `${r.column}#${r.item}`).join(", ")}`) },
+		{ id: "stage-row", label: "Stage this row", icon: <span>+</span>, onAction: (ref) => ref !== null && note(`staged row ${ref.column}#${ref.item}`) },
+	];
 
 	return (
 		<div style={{ background: theme.paper, color: theme.text, minHeight: "100vh", fontFamily: "system-ui, sans-serif", padding: 16 }}>
@@ -108,6 +124,11 @@ const App = () => {
 						{x.title}
 					</button>
 				))}
+				<button onClick={() => setRevealed((r) => !r)}
+					style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${theme.edge}`, cursor: "pointer",
+						background: revealed ? theme.panel : "transparent", color: theme.text, fontSize: 13 }}>
+					{revealed ? "show all" : "only blocks"}
+				</button>
 			</div>
 			<div style={{ color: theme.faint, fontSize: 12, marginBottom: 8 }}>{f.subtitle}</div>
 			<div style={{ border: `1px solid ${theme.edge}`, borderRadius: 8, overflow: "hidden" }}>
@@ -118,12 +139,21 @@ const App = () => {
 					columns={f.columns}
 					connections={f.connections}
 					corridors={f.corridors}
-					options={{ foldUnconnected: f.fold, diffContext: 3, maxHeight: "70vh" }}
+					sync={f.sync}
+					options={{ foldUnconnected: f.fold, diffContext: 3, boardHeight: "70vh" }}
 					controller={{
-						onRowClick: (e) => note(`row ${e.column}#${e.item}`),
+						// The owner's chip owns reveal: the board shows exactly this state and
+						// reports fold-button toggles back, so the two can never disagree.
+						reveal: revealed,
+						onReveal: (next) => { setRevealed(next); note(next ? "unfolded equal run" : "folded back to blocks"); },
+						// Selection is the controller's: click a checkbox to stage rows 1, 2, 5, 7
+						// while 4 and 6 stay out. A row click still filters (no onRowClick override).
+						selected,
+						onSelect: (next) => { setSelected(next); note(`selection: ${next.length} row(s)`); },
+						actions,
 						onConnectionClick: (c) => note(`connection ${c.id} (${c.tone ?? "same"})`),
 						onPick: (e) => note(e === null ? "pick cleared" : `pick ${e.column}#${e.item}`),
-						onReveal: (revealed) => note(revealed ? "unfolded equal run" : "folded back to blocks"),
+						onRowHover: (e) => { if (e !== null) note(`hover ${e.column}#${e.item}`); },
 					}}
 				/>
 			</div>

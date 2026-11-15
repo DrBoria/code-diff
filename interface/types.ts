@@ -73,6 +73,20 @@ export interface Token {
 	readonly ink?: string;
 }
 
+/**
+ * WHAT HAPPENED to a row, written UNDER the code line (a second/third line of the
+ * same row): "replaced `money` with `cash`", "added", "removed", "moved from line
+ * 12". The owner states the fact; the board only draws it. This is the explanation
+ * a diff viewer owes the reader — a painted range alone says nothing about what
+ * changed.
+ */
+export interface ChangeNote {
+	/** The explanation, e.g. `replaced "money" with "cash"`. */
+	readonly text: string;
+	/** The tone key the explanation is written in; absent = the row's own tone. */
+	readonly tone?: string;
+}
+
 /** A character range inside an item's `text` that must be painted (a shared name). */
 export interface Mark {
 	readonly from: number;
@@ -158,6 +172,12 @@ export interface Item<Data = never> extends Identified, Anchored {
 	readonly block?: string;
 	/** True when this row is the PARENT/header of its block (drawn emphasised). */
 	readonly blockParent?: boolean;
+	/**
+	 * The explanation of what changed on this row, drawn under the code line. The
+	 * row grows to fit it; the virtual list measures the real height, so ribbons
+	 * still attach to the code line, not to the explanation.
+	 */
+	readonly change?: ChangeNote;
 }
 
 /** A reference to a node: inside this column, or inside another one. */
@@ -265,11 +285,10 @@ export interface Tone {
 	readonly fill: string;
 	readonly line?: string;
 	/**
-	 * The ribbon of THE ONE lane under the pointer: ONE uniform shade from the first
-	 * column to the last, the same hue as `line` held a little stronger. The board
-	 * paints it ONCE — never the road laid down twice, which stacked the alpha into a
-	 * wild bright bend in the middle ("a line that changes colour half-way"). Absent
-	 * = `line`, so a hot lane is the same road, only its caption and marks light up.
+	 * @deprecated The ribbon is the SAME colour as the row wash (`fill`), hot or not —
+	 * a road that changes shade on hover is a different road. Kept for source
+	 * compatibility; the value is ignored. Hover lights the row wash (`hot`) and the
+	 * ribbon stays `fill`.
 	 */
 	readonly lineHot?: string;
 	/**
@@ -307,6 +326,11 @@ export interface LaneRibbon {
 	readonly from: string;
 	readonly to: string;
 	readonly path: string;
+	/**
+	 * The band's height in pixels — the SAME height as the row wash it joins, so the
+	 * road reads as one continuous band from column to column, never a thin wire.
+	 */
+	readonly height: number;
 }
 
 /** What one lane looks like once its ends are measured. Pure data. */
@@ -420,6 +444,17 @@ export interface RendererProps<Data = never> {
 	 * tone (`tones[item.tone].paint`) instead of one flat `theme.paint`.
 	 */
 	readonly tones?: Tones;
+	/** The ids of THIS column's rows that are selected (a selection mark is drawn). */
+	readonly selected?: ReadonlySet<string>;
+	/** Toggle a row's selection. The board reports the new set to the controller. */
+	readonly onToggleSelect?: (id: string) => void;
+	/**
+	 * The row-scoped actions the owner configured. The renderer draws a gutter button
+	 * per action on each row; the board reports the click to the controller.
+	 */
+	readonly actions?: readonly BoardAction[];
+	/** An action button was clicked on a row. The board reports it to the controller. */
+	readonly onRowAction?: (action: BoardAction, id: string) => void;
 }
 
 /** One renderer per column `kind`. Any kind may be replaced by the caller. */
@@ -544,6 +579,13 @@ export interface BoardOptions {
 	 * a tree or graph column supplies its own ("N nodes hidden", …).
 	 */
 	readonly foldLabel?: (count: number) => string;
+	/**
+	 * The ribbon's height as a fraction of one row. Default 1: the road is EXACTLY as
+	 * tall as the row wash it joins — one continuous band, same colour, same height,
+	 * from the first column to the last. A one-to-many lane tapers from the tall end
+	 * to the short end, but never thinner than the row it meets.
+	 */
+	readonly ribbonHeight?: number;
 }
 
 /** A reference to one row: a column id and an item id — the view's only address. */
@@ -553,15 +595,54 @@ export interface RowRef {
 }
 
 /**
+ * ── ACTIONS ─────────────────────────────────────────────────────────────────
+ *
+ * A configurable interaction the owner hands to the view. The view draws the
+ * button (icon + label) and reports the click; it NEVER decides what the action
+ * means. `apply-left`, `apply-right`, `apply-both`, `stage`, `select` are all the
+ * same shape — the owner supplies the id, the icon, the handler. This is how a
+ * WebStorm-style gutter of merge actions is built without the package knowing
+ * anything about merging.
+ */
+export interface BoardAction {
+	/** Stable id, e.g. `apply-left`, `stage`, `select`. */
+	readonly id: string;
+	/** The button's accessible name and tooltip. */
+	readonly label: string;
+	/**
+	 * The icon: a React node (an SVG, an emoji, a glyph). The view draws it as-is;
+	 * it never ships its own icon set.
+	 */
+	readonly icon?: ReactNode;
+	/** Where the button is drawn. `row` = a gutter button on each row; `toolbar` = the board's top bar. Default `row`. */
+	readonly scope?: "row" | "toolbar";
+	/**
+	 * Which rows the action applies to. `row` = the row the button sits on;
+	 * `selection` = every selected row; `connection` = the focused lane. Default `row`.
+	 */
+	readonly target?: "row" | "selection" | "connection";
+	/** Disabled state, evaluated per row (or once for a toolbar action). */
+	readonly disabled?: (ref: RowRef | null) => boolean;
+	/** The handler. The view reports; the controller acts. */
+	readonly onAction: (ref: RowRef | null, selected: readonly RowRef[]) => void;
+}
+
+/**
  * The controller contract. code-diff is VIEW ONLY: it never decides a merge or
  * mutates the dataset. Every interaction is reported out through these callbacks,
  * and an external controller may drive the view back through the controlled props
- * (`picked`, `reveal`). Omit them all and the view keeps its own built-in
+ * (`picked`, `reveal`, `selected`). Omit them all and the view keeps its own built-in
  * pick/reveal behaviour (the standalone comparison default).
  */
 export interface BoardController {
-	/** A row was clicked (any column). The controller decides what it means. */
+	/**
+	 * A row was clicked (any column). When present it REPLACES the built-in
+	 * click-to-filter behaviour: the controller decides what a click means (select,
+	 * stage, open, …). Omit to keep the default filter.
+	 */
 	readonly onRowClick?: (ref: RowRef) => void;
+	/** A row was hovered. Reported in addition to the built-in lane highlight. */
+	readonly onRowHover?: (ref: RowRef | null) => void;
 	/** A ribbon or its caption was clicked: the whole connection is the subject. */
 	readonly onConnectionClick?: (connection: Connection) => void;
 	/** The view's focused chain changed (null = cleared). For a controlled `picked`. */
@@ -574,4 +655,23 @@ export interface BoardController {
 	readonly onReveal?: (revealed: boolean) => void;
 	/** Controlled focus: when set, the view shows exactly this chain. */
 	readonly picked?: RowRef | null;
+	/**
+	 * Controlled reveal. When present (not `undefined`) the view shows exactly this
+	 * state and reports changes through `onReveal`; the owner's chip and the board
+	 * can never disagree. Omit to let the view own the state internally.
+	 */
+	readonly reveal?: boolean;
+	/**
+	 * The selected rows (controlled). The view draws a selection mark on each and
+	 * reports changes through `onSelect`. Selection is independent of the focused
+	 * chain: a reader can select rows 1, 2, 5, 7 and stage them while 4 and 6 stay out.
+	 */
+	readonly selected?: readonly RowRef[];
+	/** The selection changed (a row was toggled). For a controlled `selected`. */
+	readonly onSelect?: (selected: readonly RowRef[]) => void;
+	/**
+	 * Configurable actions drawn as gutter buttons (per row) and/or a toolbar. The
+	 * view draws icon + label and reports the click; the controller performs it.
+	 */
+	readonly actions?: readonly BoardAction[];
 }

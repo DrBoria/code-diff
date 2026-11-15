@@ -51,6 +51,12 @@ const Spacer = styled.div`
 	width: 100%;
 `;
 
+/* One mounted row, observed for its real height. `data-slot` is the row's index in
+   the list, so the observer knows which height to update. */
+const Slot = styled.div`
+	width: 100%;
+`;
+
 export interface VirtualProps {
 	/** How many rows the list has. */
 	readonly count: number;
@@ -87,58 +93,131 @@ interface Range {
 
 export const Virtual = ({ count, rowHeight, overscan = 1, rubber = false, cap = false, renderRow, onWindow, fullMount = FULL_MOUNT, maxHeight = "70vh", bounded = false }: VirtualProps): ReactElement => {
 	const scroller = useRef<HTMLDivElement | null>(null);
+	const content = useRef<HTMLDivElement | null>(null);
 	// A first guess so the first paint is not empty; the layout effect corrects it
 	// before the browser shows anything.
-	const [range, setRange] = useState<Range>({ start: 0, end: Math.min(count, 60) });	// The range the DOM is showing, kept OUTSIDE React state: the update below is where the
+	const [range, setRange] = useState<Range>({ start: 0, end: Math.min(count, 60) });
+	// The range the DOM is showing, kept OUTSIDE React state: the update below is where the
 	// window is decided, and deciding it must not be an impure state updater.
 	const applied = useRef<Range>({ start: -1, end: -1 });
+	// The REAL height of each row, by index. Absent = the default `rowHeight`. A row
+	// with an explanation under its code line is taller; the prefix-sum below uses the
+	// measured value so spacers and ribbons never drift.
+	const heights = useRef(new Map<number, number>());
+	// Prefix sums of the heights: offsets[i] = the top of row i. For uniform rows this
+	// is i * rowHeight, so a board without explanations pays nothing extra.
+	const offsets = useRef<number[]>([]);
+	const rebuild = (): void => {
+		const sums: number[] = new Array(count + 1);
+		sums[0] = 0;
+		for (let i = 0; i < count; i += 1) sums[i + 1] = (sums[i] ?? 0) + (heights.current.get(i) ?? rowHeight);
+		offsets.current = sums;
+	};
+	rebuild();
+
+	// The window: which rows are mounted, from the scroll offset and the real offsets.
+	// Kept in a ref so the scroll listener and the height observer always call the
+	// latest closure (with the current count/rowHeight) without re-subscribing.
+	const update = useRef<() => void>(() => {});
+	update.current = (): void => {
+		const element = scroller.current;
+		if (element === null) return;
+		if (count <= fullMount) {
+			if (applied.current.start !== 0 || applied.current.end !== count) {
+				applied.current = { start: 0, end: count };
+				setRange({ start: 0, end: count });
+				onWindow?.();
+			}
+
+			return;
+		}
+		const height = element.clientHeight;
+		const headroom = height * overscan;
+		const sums = offsets.current;
+		const top = element.scrollTop;
+		// Binary search the first row whose bottom is past the window's top edge.
+		let lo = 0;
+		let hi = count;
+		while (lo < hi) {
+			const mid = (lo + hi) >> 1;
+			if ((sums[mid + 1] ?? 0) <= top - headroom) lo = mid + 1;
+			else hi = mid;
+		}
+		const first = Math.max(0, lo);
+		let last = first;
+		while (last < count && (sums[last] ?? 0) < top + height + headroom) last += 1;
+		const end = Math.max(last, Math.min(count, first + 1));
+		if (applied.current.start === first && applied.current.end === end) return;
+		applied.current = { start: first, end };
+		setRange({ start: first, end });
+		// A DIFFERENT SET OF ROWS IS MOUNTED, so the geometry is measured again — and
+		// only then. This runs OUTSIDE the updater: measuring a parent state from inside
+		// one is an update during render, which is what turned opening a fold into an
+		// endless render loop.
+		onWindow?.();
+	};
 
 	useLayoutEffect(() => {
 		const element = scroller.current;
 		if (element === null) return undefined;
-		if (count <= fullMount) {
-			setRange((current) => (current.start === 0 && current.end === count ? current : { start: 0, end: count }));
-
-			return undefined;
-		}
-
-		const update = (): void => {
-			const height = element.clientHeight;
-			const headroom = height * overscan;
-			const first = Math.max(0, Math.floor((element.scrollTop - headroom) / rowHeight));
-			const last = Math.min(count, Math.ceil((element.scrollTop + height + headroom) / rowHeight));
-			// At least the viewport, so a pane that is not laid out yet still shows rows.
-			const end = Math.max(last, Math.min(count, first + Math.ceil(height / rowHeight) + 1));
-			if (applied.current.start === first && applied.current.end === end) return;
-			applied.current = { start: first, end };
-			setRange({ start: first, end });
-			// A DIFFERENT SET OF ROWS IS MOUNTED, so the geometry is measured again — and
-			// only then. This runs OUTSIDE the updater: measuring a parent state from inside
-			// one is an update during render, which is what turned opening a fold into an
-			// endless render loop.
-			onWindow?.();
-		};
-
-		update();
-		const observer = new ResizeObserver(update);
+		update.current();
+		const onScroll = (): void => update.current();
+		const observer = new ResizeObserver(onScroll);
 		observer.observe(element);
-		element.addEventListener("scroll", update, { passive: true });
+		element.addEventListener("scroll", onScroll, { passive: true });
 
 		return () => {
 			observer.disconnect();
-			element.removeEventListener("scroll", update);
+			element.removeEventListener("scroll", onScroll);
 		};
-	}, [count, rowHeight, overscan, onWindow, fullMount]);
+	}, [count, rowHeight, overscan, fullMount]);
+
+	// Measure the real height of every mounted row. A row that grows (an explanation
+	// appears) or shrinks updates the prefix-sum and re-decides the window; the board
+	// re-measures its anchors through onWindow, so ribbons follow the code line.
+	useLayoutEffect(() => {
+		const element = content.current;
+		if (element === null) return undefined;
+		const observer = new ResizeObserver((entries) => {
+			let changed = false;
+			for (const entry of entries) {
+				const slot = (entry.target as HTMLElement).dataset.slot;
+				if (slot === undefined) continue;
+				const index = Number(slot);
+				const height = entry.contentRect.height;
+				if (height > 0 && heights.current.get(index) !== height) {
+					heights.current.set(index, height);
+					changed = true;
+				}
+			}
+			if (!changed) return;
+			rebuild();
+			update.current();
+			onWindow?.();
+		});
+		for (const child of element.querySelectorAll("[data-slot]")) observer.observe(child);
+
+		return () => observer.disconnect();
+	}, [range.start, range.end, count, rowHeight]);
 
 	const rows: ReactNode[] = [];
-	for (let index = range.start; index < range.end; index += 1) rows.push(renderRow(index));
+	for (let index = range.start; index < range.end; index += 1) {
+		rows.push(
+			<Slot key={index} data-slot={index}>
+				{renderRow(index)}
+			</Slot>,
+		);
+	}
+	const sums = offsets.current;
+	const topSpace = sums[range.start] ?? 0;
+	const bottomSpace = Math.max(0, (sums[count] ?? 0) - (sums[range.end] ?? 0));
 
 	return (
 		<Scroller ref={scroller} $rubber={rubber} $cap={cap} $maxHeight={maxHeight} $bounded={bounded}>
-			<Content $rubber={rubber}>
-				<Spacer style={{ height: range.start * rowHeight }} />
+			<Content ref={content} $rubber={rubber}>
+				<Spacer style={{ height: topSpace }} />
 				{rows}
-				<Spacer style={{ height: Math.max(0, (count - range.end) * rowHeight) }} />
+				<Spacer style={{ height: bottomSpace }} />
 			</Content>
 		</Scroller>
 	);
