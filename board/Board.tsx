@@ -52,7 +52,7 @@ const BoardInner = (): ReactElement => {
 				</Toolbar>
 			)}
 			<Frame ref={root} $template={templateOf(props)} $height={config.boardHeight} onPointerOver={pointer.onPointerOver} onPointerMove={pointer.onPointerOver} onPointerLeave={() => { focus.setHoverRow(null); focus.setHoverRibbon(null); }} onClick={pointer.onClick}>
-				<BoardColumns props={props} connected={focus.connected} highlights={focus.highlights} geometry={geometry} layout={layout} onLayout={measure} />
+				<BoardColumns props={props} connected={focus.connected} highlights={focus.highlights} hotRibbon={focus.hotRibbon} geometry={geometry} layout={layout} onLayout={measure} />
 				<Surface
 					ref={layer}
 					onPointerOver={(e) => { const el = elementOf(e.target); const r = el === null ? null : ribbonAt(el, ribbons); if (r !== null) { focus.setHoverRibbon(r.id); focus.setHoverRow(null); emit("ribbon:mouseEnter", { ribbon: r }); } }}

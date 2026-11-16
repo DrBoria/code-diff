@@ -59,13 +59,21 @@ describe("events catalog (one map, not per-event props)", () => {
 });
 
 describe("ribbons name real ids only", () => {
-	it("drops a ribbon that names an id no column carries", () => {
+	it("draws a one-ended stub when one side's id is absent (not a two-ended road)", () => {
 		const ghost: Ribbon = { id: "ghost", ends: [{ column: "left", rows: ["999"] }, { column: "right", rows: ["1"] }] };
 		const real: Ribbon = { id: "real", ends: [{ column: "left", rows: ["1"] }, { column: "right", rows: ["1"] }] };
 		render(renderBoard({ columns: [codeColumn("left", ["a"]), codeColumn("right", ["a"])], ribbons: [ghost, real] }));
+		const stub = document.querySelector('[data-ribbon="ghost"]') as SVGGElement;
+		expect(stub).toBeTruthy();
+		expect(stub.querySelectorAll("path").length).toBe(1);
 		const lanes = [...document.querySelectorAll("[data-ribbon]")].map((g) => g.getAttribute("data-ribbon"));
 		expect(lanes).toContain("real");
-		expect(lanes).not.toContain("ghost");
+	});
+
+	it("drops a ribbon whose every id is absent", () => {
+		const gone: Ribbon = { id: "gone", ends: [{ column: "left", rows: ["999"] }, { column: "right", rows: ["999"] }] };
+		render(renderBoard({ columns: [codeColumn("left", ["a"]), codeColumn("right", ["a"])], ribbons: [gone] }));
+		expect(document.querySelector('[data-ribbon="gone"]')).toBeNull();
 	});
 });
 

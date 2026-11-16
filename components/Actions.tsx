@@ -29,16 +29,22 @@ const IconButton = styled.button`
 const TextButton = styled.button<{ $hover: boolean }>`
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
-	padding: 0 4px;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	padding: 0;
 	border: 0;
+	border-radius: 3px;
 	background: transparent;
 	color: ${(p) => p.theme.dim};
-	font: 10px/14px ${(p) => p.theme.mono};
+	font: 10px/1 ${(p) => p.theme.mono};
 	cursor: pointer;
 	opacity: ${(p) => (p.$hover ? 0 : 1)};
 	transition: opacity 90ms ease;
-	&:hover { color: ${(p) => p.theme.text}; }
+	/* The label is tooltip-only: a wide text chip in the gutter would spill
+	   over the code it is supposed to leave alone. */
+	& > span { display: none; }
+	&:hover { color: ${(p) => p.theme.text}; background: ${(p) => p.theme.edge}; }
 	[data-actions-host]:hover & { opacity: 1; }
 	&:disabled { opacity: 0.3; cursor: default; }
 `;
@@ -57,7 +63,7 @@ export const Actions = ({ actions, entity, placement, params, emit }: ActionsPro
 				if ((action.variant ?? (action.placement === "above" ? "text" : "icon")) === "text") {
 					return (
 						<TextButton key={action.id} type="button" $hover={hover} data-action={action.id} title={action.label} disabled={disabled} onClick={(e) => { e.stopPropagation(); run(action); }}>
-							{action.icon}
+							{action.icon ?? action.label.slice(0, 1)}
 							<span>{action.label}</span>
 						</TextButton>
 					);

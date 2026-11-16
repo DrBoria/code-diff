@@ -71,16 +71,18 @@ export const useBoardFocus = ({ ribbons, columns, chain, groups, pickedRibbon }:
 	const [hoverChar, setHoverChar] = useState<number | undefined>(undefined);
 
 	const focusedChain = pickedRibbon === null ? null : chain.chainOfRibbon(pickedRibbon);
-	const rowChain = rowChainOf(chain, hoverRow, hoverChar);
+	const hoverChain = hoverRibbon !== null ? chain.chainOfRibbon(hoverRibbon) : rowChainOf(chain, hoverRow, hoverChar);
 	// Hover wins while it lasts; when the pointer leaves, the PICKED chain stays
 	// lit (click-to-focus keeps its chain glowing until another pick or unpick).
-	const hotRibbon = hoverRibbon ?? (rowChain?.ribbon.id ?? null) ?? pickedRibbon;
+	const hotRibbon = hoverChain?.ribbon.id ?? pickedRibbon;
 	const hotRows = useMemo(() => groupRowsOf(hoverRow, groups, columns), [hoverRow, groups, columns]);
 	const connected = useMemo(() => {
 		const ends = focusedChain === null ? ribbons.flatMap((r) => r.ends) : focusedChain.ribbon.ends;
 		return connectedMapOf(columns, ends);
 	}, [columns, ribbons, focusedChain]);
-	const highlights = useMemo(() => highlightsOf(rowChain ?? focusedChain), [rowChain, focusedChain]);
+	// Text marks follow the HOVERED chain only — a picked chain keeps its ribbon
+	// hot, but pointing at another word must not repaint the picked chain's text.
+	const highlights = useMemo(() => highlightsOf(hoverChain), [hoverChain]);
 
 	return { hoverRibbon, setHoverRibbon, hoverRow, setHoverRow, setHoverChar, hotRibbon, hotRows, connected, highlights };
 };

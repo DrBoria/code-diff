@@ -39,9 +39,16 @@ describe("measureRibbon", () => {
 		expect(shape?.connectors.length).toBe(2);
 	});
 
-	it("returns null when an end has no measured row (no road to nowhere)", () => {
+	it("draws a stub when only one end exists (a one-sided member is visible)", () => {
 		const lookup = lookupOf({ "0": { "1": 0 }, "1": {} });
-		expect(measureRibbon({ ribbon: ribbon([{ column: "0", rows: ["1"] }, { column: "1", rows: ["9"] }]), columns: columns, lookup, rowHeight: ROW })).toBeNull();
+		const shape = measureRibbon({ ribbon: ribbon([{ column: "0", rows: ["1"] }, { column: "1", rows: ["9"] }]), columns: columns, lookup, rowHeight: ROW });
+		expect(shape).not.toBeNull();
+		expect(shape?.connectors.length).toBe(1);
+	});
+
+	it("returns null when NO end has a measured row", () => {
+		const lookup = lookupOf({ "0": {}, "1": {} });
+		expect(measureRibbon({ ribbon: ribbon([{ column: "0", rows: ["9"] }, { column: "1", rows: ["9"] }]), columns: columns, lookup, rowHeight: ROW })).toBeNull();
 	});
 
 	it("ignores zero-height fold anchors — a ribbon never balloons into a fold", () => {

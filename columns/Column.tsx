@@ -16,10 +16,11 @@ export interface ColumnProps {
 	readonly column: ColumnModel;
 	readonly connected: ReadonlySet<RowId> | undefined;
 	readonly highlights: ReadonlyMap<string, readonly TextRangeHighlight[]> | undefined;
+	readonly hotRibbon: string | null;
 	readonly onLayout: () => void;
 }
 
-export const Column = ({ column, connected, highlights, onLayout }: ColumnProps): ReactElement => {
+export const Column = ({ column, connected, highlights, hotRibbon, onLayout }: ColumnProps): ReactElement => {
 	const { config, state, props } = useBoard();
 	const rubber = (column.fit ?? props.fit) === "rubber";
 	const slots = useRowFold(column, connected, state.state.revealed, config.foldUnconnected);
@@ -29,7 +30,7 @@ export const Column = ({ column, connected, highlights, onLayout }: ColumnProps)
 		const slot: RowSlot | undefined = slots[at];
 		if (slot === undefined) return null;
 		if (slot.kind === "fold") return <ColumnFold slot={slot} columnId={column.id} />;
-		return <ColumnRow column={column} row={slot.row} index={slot.index} rubber={rubber} focus={highlights?.get(String(slot.row.id)) ?? []} selected={selected.has(String(slot.row.id))} />;
+		return <ColumnRow column={column} row={slot.row} index={slot.index} rubber={rubber} focus={highlights?.get(String(slot.row.id)) ?? []} hotRibbon={hotRibbon} selected={selected.has(String(slot.row.id))} />;
 	};
 
 	return (

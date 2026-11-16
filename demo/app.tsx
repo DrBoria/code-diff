@@ -74,7 +74,7 @@ const App = () => {
 		{ id: "apply-both", label: "Apply both", icon: <span>⇄</span>, entity: "ribbon", placement: "connector", onClick: (p) => p.ribbon && apply(p.ribbon.id, "both") },
 		{ id: "stage", label: "Stage selection", icon: <span>✓</span>, entity: "row", placement: "toolbar", disabled: (p) => p.selected.length === 0, onClick: (p) => note(`staged ${p.selected.length}: ${p.selected.map((r) => `${r.column}#${r.row}`).join(", ")}`) },
 		{ id: "undo", label: "Undo", icon: <span>↩</span>, entity: "row", placement: "toolbar", disabled: () => history.length === 0, onClick: undo },
-		{ id: "stage-row", label: "stage", entity: "row", placement: "above", variant: "text", onClick: (p) => p.row && setSelected((s) => [...s, p.row as RowRef]) },
+		{ id: "stage-row", label: "stage", icon: <span>✓</span>, entity: "row", placement: "above", variant: "text", onClick: (p) => p.row && setSelected((s) => [...s, p.row as RowRef]) },
 	];
 
 	const events: Events = {

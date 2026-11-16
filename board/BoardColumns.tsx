@@ -18,12 +18,13 @@ export interface BoardColumnsProps {
 	readonly props: BoardProps;
 	readonly connected: ConnectedMap;
 	readonly highlights: ReadonlyMap<string, ReadonlyMap<string, readonly TextRangeHighlight[]>>;
+	readonly hotRibbon: string | null;
 	readonly geometry: RibbonGeometry;
 	readonly layout: SurfaceLayout | null;
 	readonly onLayout: () => void;
 }
 
-export const BoardColumns = ({ props, connected, highlights, geometry, layout, onLayout }: BoardColumnsProps): ReactElement => {
+export const BoardColumns = ({ props, connected, highlights, hotRibbon, geometry, layout, onLayout }: BoardColumnsProps): ReactElement => {
 	const { config, state, emit } = useBoard();
 	const actions = props.actions ?? [];
 	const connectorActions = actions.filter((a) => a.entity === "ribbon" && a.placement === "connector");
@@ -37,7 +38,7 @@ export const BoardColumns = ({ props, connected, highlights, geometry, layout, o
 				return (
 					<div key={column.id} style={{ display: "contents" }}>
 						<Cell data-column={column.id} $cap={column.cap === true} $bounded={config.boardHeight !== undefined}>
-							{Render !== undefined ? <Render column={column} /> : <Column column={column} connected={connected.get(column.id)} highlights={highlights.get(column.id)} onLayout={onLayout} />}
+							{Render !== undefined ? <Render column={column} /> : <Column column={column} connected={connected.get(column.id)} highlights={highlights.get(column.id)} hotRibbon={hotRibbon} onLayout={onLayout} />}
 						</Cell>
 						{corridor === undefined ? null : (
 							<Corridor data-corridor={index}>

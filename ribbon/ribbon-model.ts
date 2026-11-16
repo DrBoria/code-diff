@@ -139,33 +139,40 @@ const columnIndex = (columns: readonly string[], id: string): number => {
 	return index === -1 ? 0 : index;
 };
 
-/** One link's two located ends, as keyed marks ready for twin pairing. */
-const laneMarks = (rows: readonly MarkRow[], columns: readonly string[], link: MemberLink): { left: Located; right: Located; marks: [KeyedMark, KeyedMark] } | null => {
+/** One link's located ends, as keyed marks ready for twin pairing. A name that
+ *  exists on ONE side only still gets a lane (one end, one mark): an added or
+ *  removed member is part of the comparison, not invisible. */
+const laneMarks = (rows: readonly MarkRow[], columns: readonly string[], link: MemberLink): { left: Located | null; right: Located | null; marks: KeyedMark[] } | null => {
 	const left = locate({ rows, column: columnIndex(columns, link.leftColumn), name: link.left.name, line: link.left.line });
 	const right = locate({ rows, column: columnIndex(columns, link.rightColumn), name: link.right.name, line: link.right.line });
-	if (!left || !right) return null;
+	if (!left && !right) return null;
 	const mark = (column: string, end: MemberLinkEnd, at: Located): KeyedMark => ({ column, line: at.line, from: at.from, to: at.to, name: end.name, ...(end.key === undefined ? {} : { key: end.key }) });
-	return { left, right, marks: [mark(link.leftColumn, link.left, left), mark(link.rightColumn, link.right, right)] };
+	const marks: KeyedMark[] = [];
+	if (left) marks.push(mark(link.leftColumn, link.left, left));
+	if (right) marks.push(mark(link.rightColumn, link.right, right));
+	return { left, right, marks };
 };
 
 /** Resolve semantic links into ribbons with anchors + duplicates. */
 export const resolveLanes = (rows: readonly MarkRow[], columns: readonly string[], links: readonly MemberLink[]): Ribbon[] => {
-	const lanes: { link: MemberLink; left: Located; right: Located; marks: [KeyedMark, KeyedMark] }[] = [];
+	const lanes: { link: MemberLink; left: Located | null; right: Located | null; marks: KeyedMark[] }[] = [];
 	for (const link of links) {
 		const resolved = laneMarks(rows, columns, link);
 		if (resolved !== null) lanes.push({ link, ...resolved });
 	}
 	pairTwins(lanes.flatMap((lane) => lane.marks));
-	return lanes.map(({ link, left, right, marks }) => ({
-		id: link.connectionId,
-		...(link.label === undefined ? {} : { label: link.label }),
-		tone: link.tone ?? "duplicate",
-		ends: [
-			{ column: link.leftColumn, rows: [left.line] },
-			{ column: link.rightColumn, rows: [right.line] },
-		],
-		anchors: marks.map(({ column, line, from, to, duplicate }) => (duplicate === undefined ? { column, line, from, to } : { column, line, from, to, duplicate })),
-	}));
+	return lanes.map(({ link, left, right, marks }) => {
+		const ends: { column: string; rows: string[] }[] = [];
+		if (left !== null) ends.push({ column: link.leftColumn, rows: [left.line] });
+		if (right !== null) ends.push({ column: link.rightColumn, rows: [right.line] });
+		return {
+			id: link.connectionId,
+			...(link.label === undefined ? {} : { label: link.label }),
+			tone: link.tone ?? (left !== null && right !== null ? "duplicate" : "unique"),
+			ends,
+			anchors: marks.map(({ column, line, from, to, duplicate }) => (duplicate === undefined ? { column, line, from, to } : { column, line, from, to, duplicate })),
+		};
+	});
 };
 
 // Row-level grouping lives in its own file (ribbon-group.ts).

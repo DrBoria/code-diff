@@ -1,13 +1,14 @@
 import type { Ribbon, MeasuredRibbon } from "./ribbon-types.js";
 import { measureRibbon } from "./ribbon-measure.js";
 import { positionRibbons, type Positioned } from "./hooks/use-ribbon-position.js";
-import { bandPaths, groupHintPath } from "./ribbon-svg.js";
+import { groupHintPath } from "./ribbon-svg.js";
 import type { RibbonContext } from "./ribbon-context.js";
 
 /**
  * The backdrop scene, assembled from pure pieces: measure every ribbon against
- * the live layout, allocate corridor slots, then write the row washes (with the
- * hovered group's weaker hints). No React — the paint hook only commits this.
+ * the live layout and allocate corridor slots. The backdrop is RIBBONS ONLY —
+ * rows are never washed; a hovered group header adds thin hint lanes, not tints.
+ * No React — the paint hook only commits this.
  */
 export interface Scene {
 	readonly measured: readonly Positioned[];
@@ -38,7 +39,7 @@ export const sceneOf = (ctx: RibbonContext): Scene => {
 	const hotChain = ctx.hotRibbon === null ? null : (measured.find((m) => m.ribbon.id === ctx.hotRibbon) ?? null);
 	const hotKeys = hotChain === null ? new Set<string>() : chainKeys(hotChain.ribbon);
 
-	const bands = bandPaths(measured, ctx.columnBoxes, ctx.tone, ctx.hotRibbon);
+	const bands: SVGElement[] = [];
 	for (const key of ctx.hotRows) {
 		if (hotKeys.has(key)) continue;
 		const hint = groupHintPath(ctx, key);

@@ -1,5 +1,5 @@
 import type { Ribbon, MeasuredRibbon } from "./ribbon-types.js";
-import { bandRect, type RibbonColumnBox } from "./ribbon-measure.js";
+import type { Box } from "../rows/row-types.js";
 import type { ToneApi } from "./hooks/use-ribbon-tone.js";
 import type { Theme } from "../styles/theme-types.js";
 import type { RibbonContext } from "./ribbon-context.js";
@@ -21,21 +21,26 @@ const pathOf = (d: string, fill: string): SVGPathElement => {
 	return path;
 };
 
-/** The row washes of every measured ribbon, in its chain's shade. */
-export const bandPaths = (measured: readonly { ribbon: Ribbon; shape: MeasuredRibbon }[], columnBoxes: readonly RibbonColumnBox[], tone: ToneApi, hotRibbon: string | null): SVGElement[] => {
-	const out: SVGElement[] = [];
-	for (const { ribbon, shape } of measured) {
-		const fill = hotRibbon === ribbon.id ? tone.hotOf(ribbon) : tone.fillOf(ribbon);
-		for (const band of shape.bands) {
-			const colBox = columnBoxes.find((c) => c.id === band.column)?.box;
-			if (colBox == null) continue;
-			out.push(pathOf(bandRect(band.top, band.bottom, colBox.left, colBox.right), fill));
-		}
+/**
+ * One group-hint RIBBON: a hovered group HEADER lights its members with thin
+ * lanes in the corridor — never a wash over the code. Members on two columns
+ * are joined; a one-column group gets a stub at the corridor edge.
+ */
+/** The corridor-side edges of a hint lane: from this column towards its
+ *  nearest neighbour (a 14px stub when the group lives in one column). */
+const hintEdges = (ctx: RibbonContext, column: string, colBox: Box): { x1: number; x2: number } => {
+	const centre = (colBox.left + colBox.right) / 2;
+	const others = ctx.columnBoxes.filter((c): c is { id: string; box: Box } => c.id !== column && c.box !== null);
+	const edge = (c: { id: string; box: Box }): number => (c.box.left > colBox.right ? c.box.left : c.box.right);
+	if (others.length === 0) {
+		const x1 = colBox.left <= centre ? colBox.right : colBox.left;
+		return { x1, x2: x1 + (x1 === colBox.right ? 14 : -14) };
 	}
-	return out;
+	const twin = others.reduce((best, c) => (Math.abs(edge(c) - centre) < Math.abs(edge(best) - centre) ? c : best));
+	const toRight = twin.box.left > colBox.right;
+	return { x1: toRight ? colBox.right : colBox.left, x2: edge(twin) };
 };
 
-/** One group-hint wash: a hovered group HEADER lights its members, weaker. */
 export const groupHintPath = (ctx: RibbonContext, key: string): SVGElement | null => {
 	const [column, id] = key.split("::");
 	if (column === undefined || id === undefined) return null;
@@ -44,7 +49,10 @@ export const groupHintPath = (ctx: RibbonContext, key: string): SVGElement | nul
 	if (box === null || colBox == null) return null;
 	const row = ctx.columns.find((c) => c.id === column)?.rows?.find((r) => String(r.id) === id);
 	const color = ctx.tone.colorOfKey(row?.tone ?? "duplicate");
-	const path = pathOf(bandRect(box.top, box.bottom, colBox.left, colBox.right), color.fill);
+	const y = (box.top + box.bottom) / 2;
+	const { x1, x2 } = hintEdges(ctx, column, colBox);
+	const mx = (x1 + x2) / 2;
+	const path = pathOf(`M ${x1} ${y - 1} C ${mx} ${y - 1}, ${mx} ${y - 1}, ${x2} ${y - 1} L ${x2} ${y + 1} C ${mx} ${y + 1}, ${mx} ${y + 1}, ${x1} ${y + 1} Z`, color.fill);
 	path.setAttribute("data-group-hint", key);
 	return path;
 };

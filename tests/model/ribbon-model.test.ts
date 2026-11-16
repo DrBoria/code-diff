@@ -43,8 +43,16 @@ describe("resolveLanes", () => {
 		expect(r?.anchors?.[0]?.duplicate).toBeDefined();
 	});
 
-	it("skips a link whose name is absent on a side", () => {
+	it("keeps a one-sided link as a one-ended lane (added/removed member)", () => {
 		const rows = rowsOf(["interface A {", "  id: string;", "}"], ["interface B {", "}"]);
+		const lanes = resolveLanes(rows, ["0", "1"], [link("id")]);
+		expect(lanes.length).toBe(1);
+		expect(lanes[0]?.ends.length).toBe(1);
+		expect(lanes[0]?.anchors?.length).toBe(1);
+	});
+
+	it("skips a link whose name is absent on BOTH sides", () => {
+		const rows = rowsOf(["interface A {", "}"], ["interface B {", "}"]);
 		expect(resolveLanes(rows, ["0", "1"], [link("id")]).length).toBe(0);
 	});
 });

@@ -29,6 +29,13 @@ describe("hover lights ONE chain, not the column", () => {
 		fireEvent.pointerOver(document.querySelector('[data-ribbon="m3"]') as Element);
 		expect(hotIds()).toEqual(["m3"]);
 	});
+
+	it("never washes the rows: the backdrop carries ribbons and hints only", () => {
+		render(renderBoard({ columns: [codeColumn("0", ["a", "b", "c"]), codeColumn("1", ["a", "b", "c"])], ribbons, config: { foldUnconnected: false } }));
+		const svg = document.querySelector("svg") as SVGSVGElement;
+		const layer = svg.firstElementChild as SVGGElement;
+		expect(layer.childElementCount).toBe(0);
+	});
 });
 
 describe("group hover: header lights members, member does not", () => {
