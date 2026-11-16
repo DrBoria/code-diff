@@ -19,6 +19,9 @@ export interface Column {
 	readonly mirrored?: boolean;
 	/** Cap this column's height to the board's; it scrolls inside. */
 	readonly cap?: boolean;
+	/** This column's fit, overriding the board's. A capped tree column fits
+	 *  its narrow strip ("rubber": ellipsis + tooltip) while code scrolls. */
+	readonly fit?: Fit;
 	/** false keeps every row (nothing folded). Default follows config. */
 	readonly fold?: boolean;
 	/** Source path, for the owner's tokenizer. */

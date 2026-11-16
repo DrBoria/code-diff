@@ -12,6 +12,8 @@ import { colorOf, type Theme } from "../styles/theme-types.js";
 export interface RowView {
 	readonly spans: readonly RowTextSpan[];
 	readonly paint: string | undefined;
+	/** The tone's fill over the whole row — visible even when the text is blank. */
+	readonly wash: string | undefined;
 	readonly explanationInk: string | undefined;
 }
 
@@ -38,6 +40,7 @@ export const rowViewOf = ({ row, column, focus, theme, tokenize }: RowViewArgs):
 	return {
 		spans: spansOf(row, column, focus, tokenize),
 		paint: rowColor?.paint,
+		wash: rowColor?.fill,
 		explanationInk: explanationTone === undefined ? undefined : colorOf(theme, explanationTone).text,
 	};
 };

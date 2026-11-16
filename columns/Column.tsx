@@ -21,7 +21,7 @@ export interface ColumnProps {
 
 export const Column = ({ column, connected, highlights, onLayout }: ColumnProps): ReactElement => {
 	const { config, state, props } = useBoard();
-	const rubber = props.fit === "rubber";
+	const rubber = (column.fit ?? props.fit) === "rubber";
 	const slots = useRowFold(column, connected, state.state.revealed, config.foldUnconnected);
 	const selected = new Set(state.state.selected.filter((r) => r.column === column.id).map((r) => String(r.row)));
 

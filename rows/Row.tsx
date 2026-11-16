@@ -9,9 +9,12 @@ import { RowText } from "./RowText.js";
  * holds no folding, grouping or tone logic (those live in the row/column hooks).
  */
 
-const Entry = styled.div<{ $selected?: boolean }>`
+const Entry = styled.div<{ $selected?: boolean; $wash?: string }>`
 	width: 100%;
 	position: relative;
+	/* A toned row carries its wash over the WHOLE line — an added blank line
+	   has no marks to paint behind, and without this it read as a hole. */
+	background: ${(p) => p.$wash ?? "transparent"};
 	${(p) => (p.$selected === true ? `box-shadow: inset 3px 0 0 ${p.theme.text};` : "")}
 `;
 
@@ -86,11 +89,17 @@ const Explanation = styled.div<{ $ink?: string }>`
 
 const Above = styled.div`
 	position: absolute;
-	top: -14px;
+	top: -15px;
 	left: 52px;
 	z-index: 4;
 	display: inline-flex;
 	gap: 6px;
+	/* The chip floats OVER the previous row's text. An opaque plate keeps the
+	   hovered row's action readable instead of two texts fighting for pixels. */
+	padding: 0 4px;
+	border: 1px solid ${(p) => p.theme.edge};
+	border-radius: 3px;
+	background: ${(p) => p.theme.panel};
 `;
 
 const InsideEnd = styled.span`
@@ -109,6 +118,7 @@ export interface RowProps {
 	readonly row: RowModel;
 	readonly spans: readonly RowTextSpan[];
 	readonly paint?: string;
+	readonly wash?: string;
 	readonly explanationInk?: string;
 	readonly mirrored: boolean;
 	readonly rubber: boolean;
@@ -119,22 +129,25 @@ export interface RowProps {
 	readonly renderCustom?: ReactNode;
 }
 
-export const Row = ({ row, spans, paint, explanationInk, mirrored, rubber, rowHeight, selected, aboveActions, insideActions, renderCustom }: RowProps): ReactElement => (
-	<Entry data-item={String(row.id)} data-actions-host $selected={selected}>
+/** The number plate + text + counters of one row (the custom render replaces it). */
+const RowLine = ({ row, spans, paint, mirrored, rubber, rowHeight }: RowProps): ReactElement => (
+	<Line $rubber={rubber} $rowHeight={rowHeight} $mirrored={mirrored} $indent={row.indent ?? 0} data-anchor={String(row.id)}>
+		{row.plate === undefined ? null : <Plate $mirrored={mirrored}>{row.plate}</Plate>}
+		<Text $rubber={rubber} $header={row.groupHeader === true}>
+			<RowText spans={spans} {...(paint === undefined ? {} : { paint })} />
+			{(row.counters ?? []).map((counter: Counter, at: number) => (
+				<CounterAnchor key={at} style={{ left: `${counter.from}ch` }}>
+					<CounterBadge title={counter.title}>{counter.text}</CounterBadge>
+				</CounterAnchor>
+			))}
+		</Text>
+	</Line>
+);
+
+export const Row = ({ row, spans, paint, wash, explanationInk, mirrored, rubber, rowHeight, selected, aboveActions, insideActions, renderCustom }: RowProps): ReactElement => (
+	<Entry data-item={String(row.id)} data-actions-host $selected={selected} {...(wash === undefined ? {} : { $wash: wash })}>
 		{aboveActions !== undefined ? <Above>{aboveActions}</Above> : null}
-		{renderCustom ?? (
-			<Line $rubber={rubber} $rowHeight={rowHeight} $mirrored={mirrored} $indent={row.indent ?? 0} data-anchor={String(row.id)}>
-				{row.plate === undefined ? null : <Plate $mirrored={mirrored}>{row.plate}</Plate>}
-				<Text $rubber={rubber} $header={row.groupHeader === true}>
-					<RowText spans={spans} {...(paint === undefined ? {} : { paint })} />
-					{(row.counters ?? []).map((counter: Counter, at: number) => (
-						<CounterAnchor key={at} style={{ left: `${counter.from}ch` }}>
-							<CounterBadge title={counter.title}>{counter.text}</CounterBadge>
-						</CounterAnchor>
-					))}
-				</Text>
-			</Line>
-		)}
+		{renderCustom ?? <RowLine row={row} spans={spans} paint={paint} mirrored={mirrored} rubber={rubber} rowHeight={rowHeight} />}
 		{row.explanation === undefined ? null : <Explanation {...(explanationInk === undefined ? {} : { $ink: explanationInk })}>{row.explanation.text}</Explanation>}
 		{insideActions !== undefined ? <InsideEnd>{insideActions}</InsideEnd> : null}
 	</Entry>

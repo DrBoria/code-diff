@@ -1,6 +1,6 @@
 {
   "name": "@md-code/code-diff",
-  "version": "0.13.0",
+  "version": "0.6.0",
   "description": "Generic N-column code diff view: any column kinds, any-to-any links, dynamic one-to-many ribbons.",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,19 +15,19 @@
       "default": "./dist/view.js"
     },
     "./interface": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/interface/types.d.ts",
+      "default": "./dist/interface/types.js"
     }
   },
   "files": [
     "dist",
+    "interface",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "pnpm clean && tsc -p tsconfig.json",
-    "build:demo": "esbuild demo/app.tsx --bundle --outfile=demo/app.js --format=iife --jsx=automatic --loader:.ts=ts --loader:.tsx=tsx --define:process.env.NODE_ENV=\\\"production\\\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -59,7 +59,6 @@
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19",
-    "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
     "jsdom": "^31.0.1",
     "react": "^19",

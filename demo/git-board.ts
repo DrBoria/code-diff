@@ -91,6 +91,23 @@ export const gitBoard = (before: string, after: string): GitBoard => {
 	});
 	flush();
 
+	// A blank line touching a hunk belongs to the change visually: an equal empty
+	// line right above/below changed rows read as a hole in the tint. Give it the
+	// neighbouring hunk's tone so the block reads as one continuous band. Only
+	// blank lines — real code keeps its own verdict.
+	const blank = (row: Row): boolean => (row.spans ?? []).every((s) => s.text.trim() === "");
+	const tintBlanks = (rows: Row[]): void => {
+		rows.forEach((row, i) => {
+			if (row.tone === undefined) return;
+			for (const j of [i - 1, i + 1]) {
+				const near = rows[j];
+				if (near !== undefined && near.tone === undefined && blank(near)) rows[j] = { ...near, tone: row.tone };
+			}
+		});
+	};
+	tintBlanks(left);
+	tintBlanks(right);
+
 	const columns: Column[] = [
 		{ id: "left", rows: left, ratio: 1, mirrored: true },
 		{ id: "right", rows: right, ratio: 1 },

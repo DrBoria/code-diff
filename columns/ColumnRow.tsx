@@ -26,13 +26,17 @@ export const ColumnRow = ({ column, row, index, rubber, focus, selected }: Colum
 	const view = rowViewOf({ row, column, focus, theme, tokenize: props.tokenize });
 	const params = { row: ref, selected: state.state.selected };
 	const custom = props.renderRow?.({ row, column, index, mirrored: column.mirrored === true });
+	// A rubber column ellipsizes long text (a syntax name wider than its strip);
+	// the full text stays one hover away instead of spilling into the corridor.
+	const plain = row.text ?? view.spans.map((span) => span.text).join("");
 
 	return (
-		<div key={String(row.id)} data-row-host onPointerEnter={() => emit("row:mouseEnter", { row: ref })} onPointerLeave={() => emit("row:mouseLeave", { row: null })}>
+		<div key={String(row.id)} data-row-host title={rubber && plain.length > 0 ? plain : undefined} onPointerEnter={() => emit("row:mouseEnter", { row: ref })} onPointerLeave={() => emit("row:mouseLeave", { row: null })}>
 			<Row
 				row={row}
 				spans={view.spans}
 				paint={view.paint}
+				wash={view.wash}
 				explanationInk={view.explanationInk}
 				mirrored={column.mirrored === true}
 				rubber={rubber}

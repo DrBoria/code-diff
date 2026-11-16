@@ -81,6 +81,7 @@ export const adaptLegacyBoard = (board: LegacyBoard): AdaptedBoard => {
 		...(column.ratio === undefined ? {} : { ratio: column.ratio }),
 		...(column.width === undefined ? {} : { width: column.width }),
 		...(column.cap === undefined ? {} : { cap: column.cap }),
+		...(column.fit === undefined ? {} : { fit: column.fit }),
 		...(column.fold === undefined ? {} : { fold: column.fold }),
 		...(column.path === undefined ? {} : { path: column.path }),
 		rows: (column.items ?? []).map((item): Row => {
