@@ -20,12 +20,17 @@ export interface Waist {
 	readonly plateau: number;
 }
 
-/** Everything the waist needs: the two end boxes, their corridor edges, knobs. */
+/** Everything the waist needs: the two end boxes, their corridor edges, the
+ *  outer column edges (the ribbon covers its rows to those edges), knobs. */
 export interface WaistInput {
 	readonly a: Box;
 	readonly b: Box;
 	readonly ax: number;
 	readonly bx: number;
+	/** Outer edge of the left column (ribbon start). Defaults to ax. */
+	readonly al?: number;
+	/** Outer edge of the right column (ribbon end). Defaults to bx. */
+	readonly br?: number;
 	readonly rowHeight: number;
 	readonly labelWidth?: number;
 	readonly shift?: number;
@@ -48,8 +53,11 @@ export const waistOf = ({ a, b, ax, bx, rowHeight, labelWidth = 0, shift = 0 }: 
 	return { midX, nodeY, half, plateau };
 };
 
-/** The closed filled band through the waist. One path, filled — never a stroke. */
-export const waistPath = ({ a, b, ax, bx }: WaistInput, waist: Waist): string => {
+/** THE RIBBON: one closed path. It starts at the LEFT edge of the left row,
+ *  covers that row, waists through the corridor, covers the right row to its
+ *  RIGHT edge, and returns — a single unbroken strip. The row coverage is the
+ *  ribbon's own body, not a separate band. `al`/`br` are the outer column edges. */
+export const waistPath = ({ a, b, ax, bx, al, br }: WaistInput, waist: Waist): string => {
 	const { midX, nodeY, half, plateau } = waist;
 	const pL = round(midX - plateau);
 	const pR = round(midX + plateau);
@@ -57,15 +65,23 @@ export const waistPath = ({ a, b, ax, bx }: WaistInput, waist: Waist): string =>
 	const runR = (bx - pR) * 0.45;
 	const nTop = round(nodeY - half);
 	const nBot = round(nodeY + half);
+	const leftEdge = round(al ?? ax);
+	const rightEdge = round(br ?? bx);
 	return [
-		`M ${round(ax)} ${round(a.top)}`,
+		// left row: outer edge → corridor edge (the ribbon covers its row)
+		`M ${leftEdge} ${round(a.top)}`,
+		`L ${round(ax)} ${round(a.top)}`,
 		`C ${round(ax + runL)} ${round(a.top)} ${round(pL - runL)} ${nTop} ${pL} ${nTop}`,
 		`L ${pR} ${nTop}`,
 		`C ${round(pR + runR)} ${nTop} ${round(bx - runR)} ${round(b.top)} ${round(bx)} ${round(b.top)}`,
+		// right row: corridor edge → outer edge
+		`L ${rightEdge} ${round(b.top)}`,
+		`L ${rightEdge} ${round(b.bottom)}`,
 		`L ${round(bx)} ${round(b.bottom)}`,
 		`C ${round(bx - runR)} ${round(b.bottom)} ${round(pR + runR)} ${nBot} ${pR} ${nBot}`,
 		`L ${pL} ${nBot}`,
 		`C ${round(pL - runL)} ${nBot} ${round(ax + runL)} ${round(a.bottom)} ${round(ax)} ${round(a.bottom)}`,
+		`L ${leftEdge} ${round(a.bottom)}`,
 		"Z",
 	].join(" ");
 };

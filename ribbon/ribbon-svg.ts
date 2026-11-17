@@ -6,10 +6,10 @@ import type { RibbonContext } from "./ribbon-context.js";
 import type { Scene } from "./ribbon-scene.js";
 
 /**
- * The SVG writers of the backdrop: one band per CHAIN row, one group per ribbon
- * (connectors + caption). Pure DOM writes — no measuring, no state. A focused
- * chain is painted in ONE uniform hot shade everywhere — bands AND road —
- * never stacked. Rows outside any chain are NEVER washed.
+ * The SVG writers of the backdrop: one group per ribbon (its ONE unbroken
+ * path + caption) and corridor-only group hints. Pure DOM writes. A focused
+ * chain is painted in ONE uniform hot shade. There are no separate row fills:
+ * the ribbon itself covers its rows.
  */
 
 const NS = "http://www.w3.org/2000/svg";
@@ -59,17 +59,6 @@ export const groupHintPath = (ctx: RibbonContext, key: string): SVGElement | nul
 	return path;
 };
 
-/** One CHAIN row's band: a full-height strip over the row, in the chain's one
- *  shade (hot when its chain is focused). Never painted for rows outside it. */
-export const bandPath = (ctx: RibbonContext, band: { column: string; top: number; bottom: number }, fill: string, key: string): SVGElement | null => {
-	const colBox = ctx.columnBoxes.find((c) => c.id === band.column)?.box;
-	if (colBox == null) return null;
-	const { left, right } = colBox;
-	const path = pathOf(`M ${left} ${band.top} L ${right} ${band.top} L ${right} ${band.bottom} L ${left} ${band.bottom} Z`, fill);
-	path.setAttribute("data-band", key);
-	return path;
-};
-
 export interface RibbonGroupArgs {
 	readonly ribbon: Ribbon;
 	readonly shape: MeasuredRibbon;
@@ -110,17 +99,17 @@ export const layerGroup = (svg: SVGSVGElement, current: SVGGElement | null): SVG
 
 export interface CommitArgs {
 	readonly svg: SVGSVGElement;
-	readonly layers: { bands: SVGGElement | null; ribbons: SVGGElement | null };
+	readonly layers: { hints: SVGGElement | null; ribbons: SVGGElement | null };
 	readonly scene: Scene;
 	readonly ctx: RibbonContext;
 	readonly theme: Theme;
 }
 
-/** Commit a whole scene to the SVG: the wash layer, then the ribbon layer. */
-export const commitScene = ({ svg, layers, scene, ctx, theme }: CommitArgs): { bands: SVGGElement; ribbons: SVGGElement } => {
-	const bands = layerGroup(svg, layers.bands);
-	bands.replaceChildren(...scene.bands);
+/** Commit a whole scene to the SVG: corridor hints, then the ribbons. */
+export const commitScene = ({ svg, layers, scene, ctx, theme }: CommitArgs): { hints: SVGGElement; ribbons: SVGGElement } => {
+	const hints = layerGroup(svg, layers.hints);
+	hints.replaceChildren(...scene.hints);
 	const ribbons = layerGroup(svg, layers.ribbons);
 	ribbons.replaceChildren(...scene.measured.map(({ ribbon, shape }) => ribbonGroup({ ribbon, shape, tone: ctx.tone, theme, hot: ctx.hotRibbon === ribbon.id })));
-	return { bands, ribbons };
+	return { hints, ribbons };
 };

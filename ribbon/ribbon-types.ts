@@ -25,10 +25,12 @@ export interface RibbonEnd {
 	readonly column: string;
 	readonly rows: readonly RowId[];
 	/**
-	 * A gap endpoint marks ABSENCE between two rows (a deletion in git): the
-	 * ribbon points between `after` and the next row, never into empty space.
+	 * A gap endpoint marks ABSENCE at a block boundary: the ribbon's thin
+	 * inter-line continuation hugs the block — `before` a row (gap above it,
+	 * when the member sits BELOW the block) or `after` a row (gap below it,
+	 * when the member sits ABOVE). Never into empty space, never over a row.
 	 */
-	readonly gap?: { after: RowId };
+	readonly gap?: { after?: RowId; before?: RowId };
 }
 
 /** A ribbon the owner decided on. */
@@ -53,12 +55,12 @@ export interface RibbonConnector {
 	readonly cy: number;
 }
 
-/** A measured ribbon: the ribbon's own identity (id/tone/label) plus what
- *  measuring adds — bands per column, connectors, caption, corridor box. */
+/** A measured ribbon: ONE entity. Its path is a single unbroken strip that
+ *  covers its rows and the corridor between them — there are no separate
+ *  "bands" or "ends": the ribbon itself is the whole highlight. */
 export interface MeasuredRibbon extends Pick<Ribbon, "id"> {
 	readonly tone: string;
 	readonly label: string | null;
-	readonly bands: readonly { column: string; rows: readonly RowId[]; top: number; bottom: number; tone?: string }[];
 	readonly connectors: readonly RibbonConnector[];
 	readonly caption: { x: number; y: number } | null;
 	readonly box: Box | null;

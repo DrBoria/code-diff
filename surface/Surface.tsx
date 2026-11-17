@@ -1,12 +1,64 @@
-import { forwardRef, type ReactElement, type ReactNode } from "react";
-import styled from "styled-components";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
+import styled, { ThemeProvider } from "styled-components";
+import type { Column, Fit, LaneMark, Renderer, Theme, ViewProps } from "../interface/types.js";
+import { layoutColumn, layoutLookup, measureLayout, readScrollTops, type Layout } from "../geometry/measure.js";
+import { anchorOf } from "../columns/column.js";
+import { shapesOf, type ToneLookup } from "../geometry/ribbon.js";
+import { resolveOptions } from "../config.js";
+import { useSyncedScroll } from "./scroll.js";
 
 /**
- * The backdrop layer: an absolutely-positioned SVG under the columns. Ribbons
- * paint into it imperatively; the Surface itself holds no logic. Columns sit
- * above it (z-index 2) so a band is a background, never a curtain over text.
+ * ── THE BOARD ───────────────────────────────────────────────────────────────
+ *
+ * N columns, a corridor after some of them, one layer of shapes on top. It knows
+ * the columns, the lanes and the corridor widths — and nothing else. The frame's
+ * colours and font are a `theme` PROP: this package draws nothing in colours it
+ * chose itself.
+ *
+ * SCROLLING NEVER RE-RENDERS THE BOARD. A layout is measured ONCE (per change of
+ * content or size) with the scroll taken out of every box. A scroll then only
+ * REPAINTS: one pass over the lanes whose ends are on screen, writing `d` into
+ * nodes that already exist. Nothing is measured per frame, nothing is reconciled
+ * per frame, and no node is ever created twice.
  */
-export const Layer = styled.svg`
+
+const Frame = styled.div<{ $template: string }>`
+	position: relative;
+	display: grid;
+	grid-template-columns: ${(p) => p.$template};
+	align-items: start;
+	width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	font-family: ${(p) => p.theme.mono};
+	font-size: 12px;
+	background: ${(p) => p.theme.paper};
+`;
+
+// The columns sit ABOVE the shapes: a band is a background, never a curtain over
+// the text. The layer is a sibling with a lower z-index, so a lane is visible in
+// the corridors and behind the code.
+// A capped column takes no part in sizing the row (`height: 0` contributes nothing)
+// and then grows back to the row it did not set — so its list scrolls inside the
+// board height the OTHER columns made.
+const Cell = styled.div<{ $cap: boolean }>`
+	position: relative;
+	z-index: 2;
+	min-width: 0;
+	${(p) => (p.$cap ? "height: 0; min-height: 100%;" : "")}
+`;
+
+const Corridor = styled.div`
+	min-width: 0;
+`;
+
+// THE LAYER IS IMPERATIVE. Its children are written by `paint()`, never reconciled:
+// a lane keeps its nodes for the whole life of the board, so a board that has been
+// scrolled for an hour owns exactly as many paths as it did at the start.
+// A lane under the pointer: the whole connection the hovered row takes part in
+// simply gets brighter. No scaling — a grown shape reads as a different shape,
+// and the point here is only "these pieces belong together".
+const Layer = styled.svg`
 	position: absolute;
 	inset: 0;
 	width: 100%;
@@ -14,16 +66,704 @@ export const Layer = styled.svg`
 	z-index: 1;
 	overflow: hidden;
 	pointer-events: none;
-	& [data-ribbon] { cursor: pointer; }
-	& [data-ribbon] path { pointer-events: auto; }
-	& text { pointer-events: auto; cursor: default; }
+
+	& [data-lane] {
+		cursor: pointer;
+	}
+	& [data-lane] path {
+		pointer-events: auto;
+		transition: filter 120ms ease;
+	}
+	& [data-lane][data-hot="true"] path {
+		/* The same hue, laid down twice — the lane reads as deeper, never as another colour. */
+		transition: none;
+	}
+	& text {
+		pointer-events: auto;
+		cursor: default;
+	}
+	/* The caption belongs to its lane: when the lane lights, its words do too. */
+	& [data-caption][data-hot="true"] {
+		fill: ${(p) => p.theme.text};
+	}
 `;
 
-export const Surface = forwardRef<SVGSVGElement, { children?: ReactNode; onPointerOver?: (e: React.PointerEvent<SVGSVGElement>) => void; onPointerLeave?: () => void; onClick?: (e: React.PointerEvent<SVGSVGElement>) => void }>(
-	({ children, ...handlers }, ref): ReactElement => (
-		<Layer ref={ref} {...handlers}>
-			{children}
-		</Layer>
-	),
-);
-Surface.displayName = "Surface";
+/**
+ * WHICH CHARACTER of a row the pointer is over. The board highlights a RANGE, and
+ * "the piece under the pointer" is a range too — a row can carry a dozen of them
+ * (`const paginated = paginate(results, cursor, limit)` has four), so the row alone is
+ * not precise enough to say what is being pointed at.
+ *
+ * The offset is the character inside the row's text, counted over its text nodes, and
+ * it comes from the browser's caret, not from measuring glyphs.
+ */
+const charAt = (row: HTMLElement | null, x: number, y: number): number | undefined => {
+	if (row === null) return undefined;
+	const doc = document as Document & {
+		caretPositionFromPoint?: (cx: number, cy: number) => { offsetNode: Node | null; offset: number } | null;
+		caretRangeFromPoint?: (cx: number, cy: number) => Range | null;
+	};
+	const position = doc.caretPositionFromPoint?.(x, y) ?? null;
+	const node = position?.offsetNode ?? doc.caretRangeFromPoint?.(x, y)?.startContainer ?? null;
+	const offset = position?.offset ?? doc.caretRangeFromPoint?.(x, y)?.startOffset ?? 0;
+	if (node === null || !row.contains(node)) return undefined;
+
+	let total = 0;
+	const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+	for (let current = walker.nextNode(); current !== null; current = walker.nextNode()) {
+		if (current === node) return total + offset;
+		total += (current.textContent ?? "").length;
+	}
+
+	return undefined;
+};
+
+const templateOf = <Data,>(columns: readonly Column<Data>[], corridors: readonly (number | undefined)[], fit: Fit | undefined): string =>
+	columns
+		.map((column, index) => {
+			const width =
+				column.ratio !== undefined
+					? `${column.ratio}fr`
+					: column.width === undefined
+						? "minmax(0, 1fr)"
+						: `${column.width}px`;
+			const corridor = corridors[index];
+			if (corridor === undefined) return width;
+
+			// Rubber: the corridor may shrink below its asked width, so on a narrow
+			// screen it gives room back to the columns instead of forcing a scroll.
+			return fit === "rubber" ? `${width} minmax(0, ${corridor}px)` : `${width} ${corridor}px`;
+		})
+		.join(" ");
+
+const Group = ({ children }: { children: ReactNode }): ReactElement => <>{children}</>;
+
+const NS = "http://www.w3.org/2000/svg";
+
+/** One lane's nodes, owned by the board and reused on every repaint. */
+interface LaneNode {
+	readonly group: SVGGElement;
+	readonly caption: SVGTextElement;
+}
+
+export const Surface = <Data,>({ columns, connections = [], corridors = [], sync = [], reveal = false, tones = {}, renderers = {}, render, theme, onAction, fit, tokenize, options, controller, pathTracking = false }: ViewProps<Data>): ReactElement => {
+	// The display knobs, resolved once: the owner's overrides on top of the defaults.
+	const config = useMemo(() => resolveOptions(options), [options]);
+	// THE LAYOUT, NOT THE SCROLL: measured boxes with the scroll taken out, so a
+	// scroll only repaints. Re-measured when the content or the size changes.
+	const [layout, setLayout] = useState<Layout | null>(null);
+	const [revealed, setRevealed] = useState(reveal);
+	// The row under the pointer: a column id and an item id. Only ids — the same
+	// currency the connections are written in.
+	const [hover, setHover] = useState<{ column: string; item: string; char?: number } | null>(null);
+	// The LANE under the pointer: the connection's own index. A lane is how the reader
+	// says "this row and that row are the same thing", so the pointer names a LANE and
+	// the highlight is the occurrence that lane stands for.
+	const [laneHover, setLaneHover] = useState<number | null>(null);
+	// The connection the reader clicked: the board narrows to its chain, and the
+	// "N lines hidden — click to show" button brings the rest back. A controller may
+	// own this state (`controller.picked`); otherwise the view keeps it internally.
+	const [internalPicked, setPicked] = useState<{ column: string; item: string } | null>(null);
+	const picked = controller?.picked !== undefined ? controller.picked : internalPicked;
+	const root = useRef<HTMLDivElement | null>(null);
+	const layer = useRef<SVGSVGElement | null>(null);
+	// Lane nodes, keyed by the CONNECTION's own index: a lane keeps its node for the
+	// whole life of the board, and a repaint only rewrites what it already owns.
+	const laneNodes = useRef(new Map<number, LaneNode>());
+	// The row wash, in its own layer: merged spans painted once per column and tone, so
+	// nested lanes cannot stack their transparency into a white rectangle.
+	const bandLayer = useRef<SVGGElement | null>(null);
+
+	// The owner may switch the initial state while mounted (a "show all" chip).
+	useEffect(() => setRevealed(reveal), [reveal]);
+
+	// A different board (another tab, another pair) has different connections: a pick
+	// made on the old one would hide everything here.
+	useEffect(() => setPicked(null), [connections, columns]);
+
+	// A repaint always reads the CURRENT geometry and handlers, never the ones of the
+	// render that installed the scroll listener.
+	const paintRef = useRef<() => void>(() => {});
+
+	// THE LAST LAYOUT, BY VALUE. A measurement is a fresh object every time, so
+	// `setLayout` always looked like a change and the board always re-rendered — and a
+	// render can move a box, the observer measures again, and the tab spins at 100% CPU.
+	// It started the moment a fold was opened (every column changed height at once).
+	// A layout is a pure function of the boxes, so the same boxes mean the same render.
+	const lastLayout = useRef("");
+	const keyOf = (next: Layout): string => {
+		const box = (id: string, value: { top: number; bottom: number; left: number; right: number }): string =>
+			`${id}:${value.top.toFixed(2)},${value.bottom.toFixed(2)},${value.left.toFixed(2)},${value.right.toFixed(2)}`;
+
+		return `${[...next.columns.entries()].map(([id, value]) => box(id, value)).join("|")}#${[...next.anchors.entries()].map(([id, value]) => box(id, value)).join("|")}`;
+	};
+
+	// STABLE, because a renderer re-subscribes its own observers when this identity
+	// changes — and it changes on every render if it is written inline.
+	const measure = useCallback((): void => {
+		const element = root.current;
+		if (element === null) return;
+		const next = measureLayout(element, config.bandGap);
+		const key = keyOf(next);
+		if (key === lastLayout.current) return;
+		lastLayout.current = key;
+		setLayout(next);
+	}, [config.bandGap]);
+
+	useLayoutEffect(() => {
+		const element = root.current;
+		if (!element) return undefined;
+
+		measure();
+
+		// A column that changes its MOUNTED RANGE (virtual scroll) or its size changes
+		// which anchors exist — the layer is re-measured then, and only then.
+		const observer = new ResizeObserver(() => measure());
+		observer.observe(element);
+		for (const child of element.querySelectorAll("[data-column]")) observer.observe(child);
+
+		return () => observer.disconnect();
+	}, [columns, connections, revealed, picked]);
+
+	// SCROLL → REPAINT. No state, no measurement: the offset is the only thing that
+	// moved, and every box is `content position − scroll offset`.
+	useLayoutEffect(() => {
+		const element = root.current;
+		if (!element) return undefined;
+
+		let frame = 0;
+		const onScroll = (): void => {
+			if (frame !== 0) return;
+			frame = requestAnimationFrame(() => {
+				frame = 0;
+				paintRef.current();
+			});
+		};
+		element.addEventListener("scroll", onScroll, true);
+
+		return () => {
+			element.removeEventListener("scroll", onScroll, true);
+			if (frame !== 0) cancelAnimationFrame(frame);
+		};
+	}, []);
+
+	useSyncedScroll(root, sync);
+
+	const refs = new Map<string, string>();
+	// anchor → id, so a row under the pointer resolves to the item it stands for.
+	const idsByAnchor = new Map<string, string>();
+	for (const column of columns) {
+		for (const it of column.items ?? []) {
+			refs.set(`${column.id}\u0000${String(it.id)}`, anchorOf(it));
+			idsByAnchor.set(`${column.id}\u0000${anchorOf(it)}`, String(it.id));
+		}
+	}
+	// How many lanes an id takes part in. An id in MANY lanes is a HUB (a summary row
+	// that stands for a whole kind); walking through it would light every row of that
+	// kind, which is not what the pointer asked for.
+	const laneCounts = new Map<string, number>();
+	for (const connection of connections) {
+		for (const end of connection.ends) {
+			for (const id of end.items) {
+				const key = `${end.column}\u0000${String(id)}`;
+				laneCounts.set(key, (laneCounts.get(key) ?? 0) + 1);
+			}
+		}
+	}
+	const HUB_LANES = config.hubLanes;
+
+	// The CHAIN of one id: the lanes it belongs to, and — from a lane — only ids that are
+	// not hubs. A hub stands for many rows, so passing through it would highlight rows
+	// the pointer never touched.
+	const chainOf = (seed: { column: string; item: string }): Set<string> => {
+		const lanes = new Set<string>();
+		const seen = new Set([`${seed.column}\u0000${seed.item}`]);
+		const queue = [seed];
+		while (queue.length > 0) {
+			const at = queue.shift() as { column: string; item: string };
+			for (const connection of connections) {
+				if (lanes.has(connection.id)) continue;
+				const joined = connection.ends.some((end) => end.column === at.column && end.items.some((id) => String(id) === at.item));
+				if (!joined) continue;
+				lanes.add(connection.id);
+				for (const end of connection.ends) {
+					// Only an end naming ONE non-hub id is "the same thing, over there". An end
+					// that lists many ids is "all of these live here" — walking it would light
+					// every sibling of the row under the pointer.
+					if (end.items.length !== 1) continue;
+					const key = `${end.column}\u0000${String(end.items[0])}`;
+					if (seen.has(key)) continue;
+					if ((laneCounts.get(key) ?? 0) >= HUB_LANES) continue;
+					seen.add(key);
+					queue.push({ column: end.column, item: String(end.items[0]) });
+				}
+			}
+		}
+
+		return lanes;
+	};
+
+	// Hovering does NOT walk: the pointer names a lane, or a row, and the lanes that name
+	// THAT row are lit. Walking from a row through every lane it belongs to is what
+	// turned one `Identifier` into the whole board — a row named by five lanes is a hub,
+	// not a chain. A CLICK still narrows to the whole chain: filtering is about "what else
+	// is this tied to", not about "what am I pointing at".
+	const focus = picked === null ? null : chainOf(picked);
+
+	// Which ids take part in a connection, per column. Everything else is hidden
+	// by the board — the data source never has to know about folding. A picked chain
+	// replaces that map, so every column outside it starts with an empty set.
+	const connected = new Map<string, Set<string>>();
+	const shown = focus === null ? connections : connections.filter((connection) => focus.has(connection.id));
+	if (focus !== null) for (const column of columns) connected.set(column.id, new Set<string>());
+	for (const connection of shown) {
+		for (const end of connection.ends) {
+			const set = connected.get(end.column) ?? new Set<string>();
+			for (const id of end.items) set.add(String(id));
+			connected.set(end.column, set);
+		}
+	}
+
+	// WHICH CODE LINE a row stands for: its own id, unless the row says otherwise (a tree
+	// row names a construct written on a code line). Built once per columns identity.
+	const lineMap = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const column of columns) {
+			for (const item of column.items ?? []) {
+				if (item.line !== undefined) map.set(`${column.id}\u0000${String(item.id)}`, item.line);
+			}
+		}
+
+		return map;
+	}, [columns]);
+	const lineOf = (column: string, id: string): string => lineMap.get(`${column}\u0000${String(id)}`) ?? String(id);
+
+	// The lanes the pointer focuses, by their index in `shown`. On a ROW the pointer also
+	// knows the character it is on, and then only the NARROWEST piece under it counts:
+	// `const` on a line with four marked pieces is not the `call` above it, and the
+	// enclosing blocks mark the same characters — they do not own this one.
+	const hoverLine = hover === null ? null : lineOf(hover.column, hover.item);
+	const atPointer = (marks: readonly LaneMark[] | undefined): LaneMark | null => {
+		if (marks === undefined || hover === null || hoverLine === null || hover.char === undefined) return null;
+		const at = hover;
+		const char: number = at.char ?? 0;
+		let best: LaneMark | null = null;
+		for (const mark of marks) {
+			// The range has to be on THIS row: same number in the other column is another word
+			// (`type: "dom-action"` on the left, `text: "Scrolled…"` on the right, same offsets).
+			if (mark.column !== at.column || String(mark.line) !== hoverLine) continue;
+			if (mark.from > char || char >= mark.to) continue;
+			if (best === null || mark.to - mark.from < best.to - best.from) best = mark;
+		}
+
+		return best;
+	};
+	const nearRow = laneHover !== null
+		? []
+		: hover === null
+			? []
+			: shown.map((connection, index) => (connection.ends.some((end) => end.column === hover.column && end.items.some((id) => String(id) === hover.item)) ? index : -1)).filter((index) => index >= 0);
+	// The piece the pointer is ON, if it says: the smallest range it contains. Every lane
+	// that marks exactly that range owns it; the enclosing blocks stay quiet.
+	const piece = laneHover === null && hover !== null ? nearRow.map((index) => atPointer(shown[index]?.marks)).find((range) => range !== null) ?? null : null;
+	// The lane that OWNS the piece: every enclosing block also marks the same characters,
+	// so "marks this range" is not enough — the most specific lane is the one with the
+	// fewest marks, and only it lights.
+	const owners = piece === null
+		? []
+		: nearRow.filter((index) => (shown[index]?.marks ?? []).some((mark) => String(mark.line) === hoverLine && mark.from === (piece as { from: number }).from && mark.to === (piece as { to: number }).to));
+	// ONE LANE, NOT TEN. A row takes part in a dozen nested lanes (`return` ⊃ `call` ⊃
+	// `func` ⊃ the whole block), so lighting every lane that names the row turned ten
+	// ribbons bright at once — which is as unreadable as lighting none. The pointer
+	// names ONE lane: the most specific one, measured by how few ranges it holds.
+	const marksOf = (index: number): number => (shown[index]?.marks ?? []).length;
+	const narrowest = (indices: readonly number[]): number[] => {
+		let best: number | null = null;
+		for (const index of indices) if (best === null || marksOf(index) < marksOf(best)) best = index;
+
+		return best === null ? [] : [best];
+	};
+	// A LANE THAT MARKS THIS ROW comes before one that merely names it: `limit` sits on a row
+	// the `returns` lane also joins, and the fewer-marks rule picked that empty lane while
+	// the callback-parameter lane — the one that actually marks `limit` — stayed dark.
+	const onRow = nearRow.filter((index) => (shown[index]?.marks ?? []).some((mark) => hover !== null && mark.column === hover.column && String(mark.line) === hoverLine));
+	const focused = laneHover !== null
+		? shown.map((_, index) => index).filter((index) => index === laneHover)
+		: piece === null
+			? narrowest(onRow.length > 0 ? onRow : nearRow)
+			: narrowest(owners);
+	const hotIndices = new Set(focused);
+	// WHERE the focused lanes are written: the exact ranges to underline, per column and
+	// row. Nothing is searched for — the range came with the lane.
+	//
+	// POINTING AT A ROW IS NOT POINTING AT A LANE. Hovering a lane asks "where is this
+	// lane written", and the answer is every range the lane holds. Hovering a ROW asks
+	// "which range is THIS row", and answering with the whole lane's ranges lit the
+	// entire block under the pointer. A row hover lights only what sits on that row.
+	const fromRow = laneHover === null && hover !== null;
+	const highlights = new Map<string, Map<string, { from: number; to: number; strong: boolean; ink?: string }[]>>();
+	const addHighlight = (mark: { column: string; line: string; from: number; to: number; ink?: string }): void => {
+		const rows = highlights.get(mark.column) ?? new Map<string, { from: number; to: number; strong: boolean; ink?: string }[]>();
+		const list = rows.get(String(mark.line)) ?? [];
+		list.push({ from: mark.from, to: mark.to, strong: true, ...(mark.ink === undefined ? {} : { ink: mark.ink }) });
+		rows.set(String(mark.line), list);
+		highlights.set(mark.column, rows);
+	};
+	for (const index of focused) {
+		// PATH TRACKING: light every mark of the focused lane in every column, so the
+		// whole correspondence (code word → snapshot → match → snapshot → code word)
+		// stays visible. Without it, a row hover only lights the hovered column and the
+		// reader loses the thread mid-path.
+		const line = !pathTracking && fromRow && hover !== null ? lineOf(hover.column, hover.item) : null;
+		for (const mark of shown[index]?.marks ?? []) {
+			if (line !== null && (hover === null || mark.column !== hover.column || String(mark.line) !== line)) continue;
+			// The exact piece under the pointer: the same range the lane was narrowed to.
+			if (!pathTracking && piece !== null && (mark.from !== piece.from || mark.to !== piece.to)) continue;
+			// A character that sits on NO mark of the lane (`totalActions`, `cursor` in a
+			// property-assignment row) still belongs to this row's lane: the answer is every
+			// range the lane holds on this line, not silence.
+			addHighlight(mark);
+			// AND ITS DUPLICATE: the range this one was paired with on the other side. Hovering
+			// a name has to light the SAME name over there, not the row it sits in.
+			if (mark.twin !== undefined) addHighlight(mark.twin);
+		}
+	}
+	// A connection names item IDS, but the DOM carries ANCHORS. They differ for
+	// any item that sets one (e.g. a folded run), so `layoutLookup` falls back to the
+	// anchor when the id has one of its own.
+	const ribbonColumns = columns.map((column) => ({
+		id: column.id,
+		box: layoutColumn(layout, column.id),
+	}));
+
+	// ── THE PAINT ───────────────────────────────────────────────────────────
+	//
+	// One pass over the lanes whose ends are on screen. The slot allocator is the one
+	// in `ribbon.ts` and it is NOT touched here: this only writes the paths it returns
+	// into nodes that already exist, keyed by the CONNECTION's own index.
+	// THE ROW TONES, in one map: a row may say it does NOT correspond (`differs`)
+	// while the lane it belongs to does. Built once per columns identity, so a scroll
+	// only reads it.
+	const toneMap = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const column of columns) {
+			for (const item of column.items ?? []) {
+				if (item.tone !== undefined) map.set(`${column.id}\u0000${String(item.id)}`, item.tone);
+			}
+		}
+
+		return map;
+	}, [columns]);
+	const toneOf: ToneLookup = (column, id) => toneMap.get(`${column}\u0000${String(id)}`) ?? null;
+
+	const paint = (): void => {
+		const svg = layer.current;
+		const element = root.current;
+		if (svg === null || element === null || layout === null) return;
+
+		// id → anchor, because a lane names the item's id and the DOM carries its anchor.
+		const anchorOfId = (column: string, id: string): string => refs.get(`${column}\u0000${id}`) ?? id;
+		const lookup = layoutLookup(layout, readScrollTops(element), anchorOfId);
+		const placed = shapesOf(shown, ribbonColumns, lookup, toneOf);
+		const alive = new Set<number>();
+
+		// ── THE ROW WASH, ONCE ────────────────────────────────────────────────
+		//
+		// A lane's band says "these rows are on this lane". Nested lanes cover the SAME
+		// rows (`return` ⊃ `call` ⊃ `func`), and a transparent fill is not idempotent —
+		// five copies of the wash turned a row white. So the SPANS are merged per column
+		// and tone, and each merged span is painted exactly once.
+		type Span = { top: number; bottom: number };
+		type SpanSet = { column: string; tone: string; spans: Span[] };
+		const spansOf = new Map<string, SpanSet>();
+		// The ONE lane under the pointer, kept apart: its rows are painted a second time,
+		// on top, in the `hot` fill.
+		const hotSpansOf = new Map<string, SpanSet>();
+		for (const { index, shape } of placed) {
+			const hot = hotIndices.has(index);
+			for (const band of shape.bands) {
+				const tone = band.tone ?? shape.tone;
+				const key = `${band.column}\u0000${tone}`;
+				const target = hot ? hotSpansOf : spansOf;
+				const entry = target.get(key) ?? { column: band.column, tone, spans: [] };
+				entry.spans.push({ top: band.top, bottom: band.bottom });
+				target.set(key, entry);
+			}
+		}
+		const mergedSpans = (spans: readonly Span[]): Span[] => {
+			const sorted = [...spans].sort((a, b) => a.top - b.top);
+			let current: Span | null = null;
+			const merged: Span[] = [];
+			for (const span of sorted) {
+				if (current !== null && span.top <= current.bottom + 1) current.bottom = Math.max(current.bottom, span.bottom);
+				else {
+					if (current !== null) merged.push(current);
+					current = { ...span };
+				}
+			}
+			if (current !== null) merged.push(current);
+
+			return merged;
+		};
+		const bandPaths = (column: string, spans: readonly Span[], fill: string): SVGElement[] => {
+			const box = ribbonColumns.find((entry) => entry.id === column)?.box ?? null;
+			if (box === null) return [];
+
+			return mergedSpans(spans).map((span) => {
+				const path = document.createElementNS(NS, "path");
+				path.setAttribute("d", `M ${box.left} ${span.top} L ${box.right} ${span.top} L ${box.right} ${span.bottom} L ${box.left} ${span.bottom} Z`);
+				path.setAttribute("fill", fill);
+
+				return path;
+			});
+		};
+		const bandChildren: SVGElement[] = [];
+		for (const { column, tone, spans } of spansOf.values()) bandChildren.push(...bandPaths(column, spans, tones[tone]?.fill ?? "transparent"));
+		// LAST, so it lands on top: the pointed-at lane's rows in the stronger fill.
+		for (const { column, tone, spans } of hotSpansOf.values()) bandChildren.push(...bandPaths(column, spans, tones[tone]?.hot ?? tones[tone]?.fill ?? "transparent"));
+		if (bandLayer.current === null) {
+			bandLayer.current = document.createElementNS(NS, "g");
+			svg.append(bandLayer.current);
+		}
+		bandLayer.current.replaceChildren(...bandChildren);
+
+		for (const { index, shape } of placed) {
+			alive.add(index);
+			let node = laneNodes.current.get(index);
+			if (node === undefined) {
+				const group = document.createElementNS(NS, "g");
+				group.setAttribute("data-index", String(index));
+				const caption = document.createElementNS(NS, "text");
+				caption.setAttribute("data-caption", shape.id);
+				// A caption IS its lane: the same index, so pointing at the words and pointing
+				// at the ribbon are the same act — including when the allocator moved the
+				// caption down into free space.
+				caption.setAttribute("data-index", String(index));
+				caption.setAttribute("text-anchor", "middle");
+				caption.setAttribute("font-size", "10");
+				caption.setAttribute("font-family", theme.mono);
+				node = { group, caption };
+				laneNodes.current.set(index, node);
+				svg.append(group, caption);
+			}
+
+			// The lane's own ribbon keeps ONE copy: the pointed-at lane is already told
+			// apart by its rows (painted above in the `hot` fill) and by a small lift in
+			// brightness. Stacking copies of a 0.5 alpha fill was what turned a column white.
+			const fill = tones[shape.tone]?.fill ?? "transparent";
+			const isHot = hotIndices.has(index);
+			node.group.setAttribute("data-lane", shape.id);
+			node.group.setAttribute("data-hot", isHot ? "true" : "false");
+			// A band carries the tone of the ROWS it covers: one row of a lane that breaks
+			// the correspondence is painted as such instead of being swallowed by the lane's
+			// own wash. The BANDS themselves are painted once, in the wash layer above; a lane
+			// here owns its ribbons, its caption and its hover.
+			const children: SVGElement[] = [];
+			// A hot lane is the SAME fill laid down twice: alpha adds up, the hue does not
+			// move. Changing the colour under the pointer made the ribbons look like a
+			// different lane, which is the opposite of "this is the one you pointed at".
+			for (let copy = 0; copy < (isHot ? 2 : 1); copy += 1) {
+				for (const ribbon of shape.ribbons) {
+					const path = document.createElementNS(NS, "path");
+					path.setAttribute("d", ribbon.path);
+					path.setAttribute("fill", fill);
+					children.push(path);
+				}
+			}
+			// REPLACED, not appended: a lane owns one fixed set of nodes, so a board that
+			// has been scrolled for an hour owns exactly as many paths as it did at first.
+			node.group.replaceChildren(...children);
+
+			const caption = node.caption;
+			if (shape.caption !== null && shape.label !== null) {
+				caption.setAttribute("x", String(shape.caption.x));
+				caption.setAttribute("y", String(shape.caption.y));
+				caption.setAttribute("fill", isHot ? theme.text : theme.dim);
+				caption.setAttribute("data-hot", isHot ? "true" : "false");
+				caption.textContent = shape.label;
+			} else {
+				caption.textContent = "";
+			}
+		}
+
+		for (const [index, node] of laneNodes.current) {
+			if (alive.has(index)) continue;
+			node.group.remove();
+			node.caption.remove();
+			laneNodes.current.delete(index);
+		}
+	};
+
+	paintRef.current = paint;
+	// Every render ends with a paint: the nodes already exist, geometry is the only
+	// thing that may have moved (hover, pick, expand, a new layout).
+	useLayoutEffect(() => {
+		paint();
+	});
+
+	// THE BOARD IS AS TALL AS THE CODE. The height is measured by the row plates, never
+	// by a lane: a lane that would go deeper is clipped by the frame and the columns
+	// keep their own scroll, so nothing drags the page down and no content is invented
+	// below the last row.
+	const sized = 0;
+
+	const onPointerOver = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		const target = event.target as HTMLElement;
+		// A lane and its caption live in the layer: the board's row logic must not read
+		// them as "left every row".
+		if (target.closest("svg") !== null) return;
+		// ENTERING A ROW ENDS THE LANE. A lane is cleared by `pointerleave` of the layer,
+		// and that never fires when the pointer jumps from a ribbon straight onto a row
+		// above it — so the lane named a moment ago stayed hot and every row hover was
+		// answered by that old lane. One answer at a time.
+		setLaneHover(null);
+		const cell = target.closest("[data-column]");
+		if (!(cell instanceof HTMLElement)) {
+			setHover(null);
+
+			return;
+		}
+		const column = cell.dataset.column ?? "";
+		// A renderer marks its row with `data-item` when it has one; otherwise the
+		// anchor IS the id.
+		const row = target.closest("[data-item]");
+		const anchor = target.closest("[data-anchor]");
+		const id =
+			row instanceof HTMLElement && row.dataset.item !== undefined
+				? row.dataset.item
+				: anchor instanceof HTMLElement && anchor.dataset.anchor !== undefined
+					? idsByAnchor.get(`${column}\u0000${anchor.dataset.anchor}`)
+					: undefined;
+		const char = charAt(anchor instanceof HTMLElement ? anchor : null, event.clientX, event.clientY);
+		const next = id === undefined ? null : char === undefined ? { column, item: id } : { column, item: id, char };
+		setLaneHover(null);
+		setHover((current) => (current?.column === next?.column && current?.item === next?.item && current?.char === next?.char ? current : next));
+	};
+
+	// A pick keeps exactly what the pointer showed. Clicking the same row again (or
+	// the fold button) lets everything back. The view reports the change out; when a
+	// controller owns `picked`, it drives the state back through the prop.
+	const pick = (next: { column: string; item: string }): void => {
+		if (chainOf(next).size === 0) return;
+		const cleared = picked?.column === next.column && picked?.item === next.item;
+		const value = cleared ? null : next;
+		setRevealed(false);
+		setPicked(value);
+		controller?.onPick?.(value);
+	};
+
+	const onClick = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		const target = event.target as HTMLElement;
+		if (target.closest("svg") !== null) return;
+		const cell = target.closest("[data-column]");
+		const stamp = cell instanceof HTMLElement ? cell.dataset.column : undefined;
+		if (stamp === undefined) return;
+		const row = target.closest("[data-item]");
+		if (row instanceof HTMLElement && row.dataset.item !== undefined) {
+			const ref = { column: stamp, item: row.dataset.item };
+			controller?.onRowClick?.(ref);
+			pick(ref);
+		}
+	};
+
+	// A LANE's own handlers, delegated on the layer. The pointer names a LANE (its index),
+	// and a lane's caption carries the SAME index — so pointing at words that the allocator
+	// moved down still points at the lane they name.
+	const laneIndexOf = (element: Element): number | null => {
+		const lane = element.closest("[data-index]");
+		if (lane === null) return null;
+		const index = Number(lane.getAttribute("data-index"));
+
+		return Number.isFinite(index) && shown[index] !== undefined ? index : null;
+	};
+
+	const onLayerOver = (event: ReactPointerEvent<SVGSVGElement>): void => {
+		const index = laneIndexOf(event.target as Element);
+		if (index === null) return;
+		// A lane is ONE thing: the row under the pointer and its correspondence are the same
+		// subject, so the highlight goes through the lane, not through a chain of rows.
+		setHover(null);
+		setLaneHover(index);
+	};
+
+	const onLayerLeave = (): void => {
+		setLaneHover(null);
+		setHover(null);
+	};
+
+	const onClickLayer = (event: ReactPointerEvent<SVGSVGElement>): void => {
+		const index = laneIndexOf(event.target as Element);
+		if (index === null) return;
+		const connection = shown[index];
+		if (connection === undefined) return;
+		event.stopPropagation();
+		// The whole connection is the subject of a ribbon click; the controller decides
+		// what to do with it (apply a hunk, open a pair, …). The view also focuses it.
+		controller?.onConnectionClick?.(connection);
+		const end = connection.ends.find((entry) => entry.items.length > 0);
+		if (end !== undefined) pick({ column: end.column, item: String(end.items[0]) });
+	};
+
+	return (
+		<ThemeProvider theme={theme}>
+			<Frame
+				ref={root}
+				style={sized > 0 ? { minHeight: `${Math.ceil(sized)}px` } : undefined}
+				$template={templateOf(columns, corridors, fit)}
+				onPointerOver={onPointerOver}
+				// The CHARACTER under the pointer moves with the pointer, and `pointerover` fires
+				// only when the row is entered: without this the piece would be the one the
+				// pointer entered on, not the one it is on.
+				onPointerMove={onPointerOver}
+				onPointerLeave={() => {
+					setHover(null);
+					setLaneHover(null);
+				}}
+				onClick={onClick}
+			>
+				{columns.map((column, index) => {
+					const Render = renderers[column.kind] as Renderer<Data> | undefined;
+					if (!Render) throw new Error(`code-diff: no renderer for kind "${column.kind}"`);
+					const corridor = corridors[index];
+					const linkSet = connected.get(column.id);
+					// Folding is the comparison default; a column may opt out (`fold: false`),
+					// and the board may turn it off for everyone (`options.foldUnconnected`).
+					const foldHere = column.fold ?? config.foldUnconnected;
+
+					return (
+						<Group key={column.id}>
+							<Cell data-column={column.id} $cap={column.cap === true}>
+								<Render
+									column={column}
+									{...(render === undefined ? {} : { render })}
+									{...(onAction === undefined ? {} : { onAction })}
+									{...(linkSet === undefined || foldHere === false ? {} : { connected: linkSet })}
+									expanded={revealed}
+									onLayout={measure}
+									{...(highlights.has(column.id) ? { highlight: highlights.get(column.id) } : {})}
+									onReveal={() => {
+										setPicked(null);
+										setRevealed(true);
+										controller?.onPick?.(null);
+										controller?.onReveal?.();
+									}}
+									{...(fit === undefined ? {} : { fit })}
+									{...(tokenize === undefined ? {} : { tokenize })}
+									options={config}
+								/>
+							</Cell>
+							{corridor === undefined ? null : <Corridor data-corridor={index} />}
+						</Group>
+					);
+				})}
+
+				{/* THE LAYER IS EMPTY BY CONSTRUCTION: `paint()` writes the lanes into it, so an
+				    hour of scrolling cannot add a single node to the board. */}
+				<Layer ref={layer} onPointerOver={onLayerOver} onPointerLeave={onLayerLeave} onClick={onClickLayer} />
+			</Frame>
+		</ThemeProvider>
+	);
+};
+
+export type { Theme };
+export default Surface;

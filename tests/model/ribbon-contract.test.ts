@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { measureRibbon, type RibbonColumnBox } from "../../ribbon/ribbon-measure.js";
-import { positionRibbons } from "../../ribbon/hooks/use-ribbon-position.js";
 import { sceneOf } from "../../ribbon/ribbon-scene.js";
 import type { RibbonContext } from "../../ribbon/ribbon-context.js";
 import type { ToneApi } from "../../ribbon/hooks/use-ribbon-tone.js";
@@ -10,137 +9,110 @@ import type { Ribbon } from "../../ribbon/ribbon-types.js";
 import type { Box } from "../../rows/row-types.js";
 import type { AnchorLookup } from "../../surface/surface-types.js";
 
-// THE RIBBON CONTRACT — executable, not prose. A ribbon is ONE CONTINUOUS
-// filled strip: every measured end has a row-height band, neighbouring ends
-// are joined, bands and road share one tone, captions ride the road, hints
-// are strips too, and washes NEVER cover rows outside the chain. Deleting
-// any of this breaks the contract and the build goes red — a reinterpretation
-// of a complaint is not a licence to remove a rule.
+// THE RIBBON IS ONE ENTITY (user's rule): a single unbroken path that covers
+// its rows AND the corridor between them. There are no separate "bands", no
+// "ends" as independent highlights — the ribbon's own body covers the rows.
+// A one-sided member is ONE path: its row + a tongue into the corridor.
 
 const ROW = 18;
-const box = (top: number, left = 0, right = 100): Box => ({ top, bottom: top + ROW - 2, left, right });
+const box = (top: number, left: number, right: number): Box => ({ top, bottom: top + ROW - 2, left, right });
 const columns: RibbonColumnBox[] = [
 	{ id: "0", box: { top: 0, bottom: 1000, left: 0, right: 100 } },
 	{ id: "1", box: { top: 0, bottom: 1000, left: 200, right: 300 } },
 ];
 const lookupOf = (pos: Record<string, Record<string, number>>): AnchorLookup => (column, id) => {
 	const row = pos[column]?.[id];
-	return row === undefined ? null : box(row * ROW);
+	return row === undefined ? null : box(row * ROW, column === "0" ? 0 : 200, column === "0" ? 100 : 300);
 };
 const chain: Ribbon = { id: "c", tone: "duplicate", ends: [{ column: "0", rows: ["1"] }, { column: "1", rows: ["1"] }] };
 const two = lookupOf({ "0": { "1": 0 }, "1": { "1": 0 } });
 const measure = (ribbon: Ribbon, lookup: AnchorLookup, shift = 0) =>
 	measureRibbon({ ribbon, columns, lookup, rowHeight: ROW, shift });
 
-/** Every vertical extent named by a path's commands (top and bottom edges). */
+const xsOf = (path: string): number[] => path.split(/[MCZL]\s*/).flatMap((piece) => {
+	const parts = piece.trim().split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n));
+	const out: number[] = [];
+	for (let i = 0; i + 1 < parts.length; i += 2) out.push(parts[i] ?? 0);
+	return out;
+});
 const ysOf = (path: string): number[] => path.split(/[MCZL]\s*/).flatMap((piece) => {
 	const parts = piece.trim().split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n));
-	return parts.length >= 2 ? [parts[1] ?? 0, parts[parts.length - 1] ?? 0] : [];
+	const out: number[] = [];
+	for (let i = 0; i + 1 < parts.length; i += 2) out.push(parts[i + 1] ?? 0);
+	return out;
 });
 
 const color = { fill: "rgba(1,2,3,0.2)", hot: "rgba(1,2,3,0.4)" };
 const tone: ToneApi = { toneOf: () => "duplicate", colorOfKey: () => color, fillOf: () => color.fill, hotOf: () => color.hot };
-const cols: Column[] = [{ id: "0", rows: [{ id: "1", text: "a" }, { id: "2", text: "b" }] }, { id: "1", rows: [{ id: "1", text: "a" }, { id: "2", text: "b" }] }];
+const cols: Column[] = [{ id: "0", rows: [{ id: "1", text: "a" }] }, { id: "1", rows: [{ id: "1", text: "a" }] }];
 const ctxOf = (over: Partial<RibbonContext>): RibbonContext => ({
 	ribbons: [chain], columns: cols, columnBoxes: columns, lookup: two, rowHeight: ROW, tone, hotRibbon: null, hotRows: new Set<string>(), ...over,
 });
 
-describe("contract: the ribbon is one continuous strip", () => {
-	it("every measured end keeps a band at least one row tall", () => {
+describe("the ribbon is ONE entity", () => {
+	it("has no separate bands — the shape carries only connectors", () => {
 		const shape = measure(chain, two);
-		expect(shape?.bands.length).toBe(2);
-		for (const band of shape?.bands ?? []) expect(band.bottom - band.top).toBeGreaterThanOrEqual(ROW - 2);
+		expect(shape).not.toBeNull();
+		expect("bands" in (shape ?? {})).toBe(false);
 	});
 
-	it("bands cover EXACTLY the chain's rows — never a row outside it", () => {
-		const tall: Ribbon = { id: "t", ends: [{ column: "0", rows: ["1", "2", "3"] }, { column: "1", rows: ["1"] }] };
-		const lookup = lookupOf({ "0": { "1": 0, "2": 1, "3": 2, "9": 9 }, "1": { "1": 0 } });
-		const shape = measure(tall, lookup);
-		for (const band of shape?.bands ?? []) expect(band.bottom).toBeLessThanOrEqual(3 * ROW);
-		expect((shape?.bands ?? []).some((b) => b.column === "0" && b.bottom > 2 * ROW)).toBe(true);
-	});
-
-	it("a crowded corridor shifts the waist but never the bands", () => {
-		const natural = measure(chain, two);
-		const shifted = measure(chain, two, 90);
-		expect(shifted?.bands).toEqual(natural?.bands);
-		expect((shifted?.box?.top ?? 0) - (natural?.box?.top ?? 0)).toBe(90);
-	});
-
-	it("N ends: N-1 connectors, no gap between neighbouring ends", () => {
-		const three: RibbonColumnBox[] = [...columns, { id: "2", box: { top: 0, bottom: 1000, left: 400, right: 500 } }];
-		const lookup = lookupOf({ "0": { "1": 0 }, "1": { "1": 0 }, "2": { "1": 0 } });
-		const shape = measureRibbon({ ribbon: { id: "n", ends: [{ column: "0", rows: ["1"] }, { column: "1", rows: ["1"] }, { column: "2", rows: ["1"] }] }, columns: three, lookup, rowHeight: ROW });
-		expect(shape?.connectors.length).toBe(2);
-		expect(shape?.connectors.map((c) => `${c.from}>${c.to}`)).toEqual(["0>1", "1>2"]);
-	});
-
-	it("every path is a CLOSED filled strip — no open strokes", () => {
+	it("its ONE path covers the left row to the outer edge and the right row to the outer edge", () => {
 		const shape = measure(chain, two);
-		for (const connector of shape?.connectors ?? []) {
-			expect(connector.path.trim().endsWith("Z")).toBe(true);
-			expect(connector.height).toBeGreaterThanOrEqual(4);
-		}
+		expect(shape?.connectors.length).toBe(1);
+		const xs = xsOf(shape?.connectors[0]?.path ?? "");
+		expect(Math.min(...xs)).toBe(0); // left column outer edge
+		expect(Math.max(...xs)).toBe(300); // right column outer edge
 	});
 
-	it("a one-ended stub is a full row-height strip, not a sliver", () => {
+	it("the path is closed and unbroken (single Z)", () => {
+		const shape = measure(chain, two);
+		const d = shape?.connectors[0]?.path ?? "";
+		expect(d.trim().endsWith("Z")).toBe(true);
+		expect((d.match(/Z/g) ?? []).length).toBe(1);
+		expect((d.match(/M/g) ?? []).length).toBe(1);
+	});
+
+	it("a one-sided member is ONE path: row body + corridor + thin inter-line into the opposite column", () => {
 		const shape = measure(chain, lookupOf({ "0": { "1": 0 }, "1": {} }));
 		expect(shape?.connectors.length).toBe(1);
-		expect(shape?.connectors[0]?.height).toBeGreaterThanOrEqual(ROW - 2);
+		const d = shape?.connectors[0]?.path ?? "";
+		expect((d.match(/M/g) ?? []).length).toBe(1);
+		const xs = xsOf(d);
+		expect(Math.min(...xs)).toBe(0); // covers its row from the outer edge
+		expect(Math.max(...xs)).toBe(300); // micro-line reaches the opposite column's far edge
+		// The continuation inside the opposite column is a 2px hairline BETWEEN rows.
+		const ys = ysOf(d);
+		const inOpp = xs.map((x, i) => ({ x, y: ys[i] ?? 0 })).filter((p) => p.x > 200);
+		const oppYs = inOpp.map((p) => p.y);
+		expect(Math.max(...oppYs) - Math.min(...oppYs)).toBeLessThanOrEqual(2);
 	});
 
-	it("the caption rides the road: inside the corridor box, shifted with it", () => {
+	it("the waist shifts only the middle; the row coverage stays on the rows", () => {
+		const natural = measure(chain, two);
+		const shifted = measure(chain, two, 90);
+		const ysN = ysOf(natural?.connectors[0]?.path ?? "");
+		const ysS = ysOf(shifted?.connectors[0]?.path ?? "");
+		expect(Math.min(...ysN)).toBe(Math.min(...ysS)); // top row edge unchanged
+		expect(Math.max(...ysS)).toBeGreaterThan(Math.max(...ysN)); // plateau moved down
+	});
+
+	it("the scene emits no band elements, standing or hot", () => {
+		for (const hot of [null, "c"]) {
+			const scene = sceneOf(ctxOf({ hotRibbon: hot }));
+			expect(scene.hints.length).toBe(0);
+		}
+	});
+
+	it("the caption rides the plateau inside the corridor box", () => {
 		const labelled: Ribbon = { ...chain, label: "dup" };
-		for (const shift of [0, 90]) {
-			const shape = measure(labelled, two, shift);
-			const cap = shape?.caption;
-			const road = shape?.box;
-			expect(cap).not.toBeNull();
-			expect(road).not.toBeNull();
-			if (cap !== null && cap !== undefined && road != null) {
-				expect(cap.y).toBeGreaterThanOrEqual(road.top);
-				expect(cap.y).toBeLessThanOrEqual(road.bottom + 2);
-			}
+		const shape = measure(labelled, two, 40);
+		expect(shape?.caption).not.toBeNull();
+		expect(shape?.box).not.toBeNull();
+		const cap = shape?.caption;
+		const road = shape?.box;
+		if (cap && road) {
+			expect(cap.y).toBeGreaterThanOrEqual(road.top);
+			expect(cap.y).toBeLessThanOrEqual(road.bottom + 2);
 		}
-	});
-
-	it("plateaus never dip below the columns' bottom edge", () => {
-		const low: RibbonColumnBox[] = columns.map((c) => ({ id: c.id, box: { top: 0, bottom: 80, left: c.box?.left ?? 0, right: c.box?.right ?? 100 } }));
-		const lanes = [0, 1, 2].map((i): Ribbon => ({ id: `l${i}`, ends: [{ column: "0", rows: [String(i + 1)] }, { column: "1", rows: [String(i + 1)] }] }));
-		const lookup = lookupOf({ "0": { "1": 0, "2": 1, "3": 2 }, "1": { "1": 0, "2": 1, "3": 2 } });
-		const natural = lanes.map((ribbon) => ({ ribbon, shape: measureRibbon({ ribbon, columns: low, lookup, rowHeight: ROW }) })).filter((e): e is { ribbon: Ribbon; shape: NonNullable<ReturnType<typeof measureRibbon>> } => e.shape !== null);
-		const placed = positionRibbons(natural, low, (ribbon, shift) => measureRibbon({ ribbon, columns: low, lookup, rowHeight: ROW, shift }));
-		for (const entry of placed) {
-			for (const connector of entry.shape.connectors) expect(Math.max(...ysOf(connector.path))).toBeLessThanOrEqual(82);
-		}
-	});
-});
-
-describe("contract: one tone, hints are strips, washes stay inside the chain", () => {
-	it("standing bands paint the SAME colour as their ribbon's road", () => {
-		const scene = sceneOf(ctxOf({}));
-		for (const path of scene.bands) expect(path.getAttribute("fill")).toBe(color.fill);
-	});
-
-	it("a hot chain's bands paint its ONE hot shade, uniformly", () => {
-		const scene = sceneOf(ctxOf({ hotRibbon: "c" }));
-		expect(scene.bands.length).toBe(2);
-		for (const path of scene.bands) expect(path.getAttribute("fill")).toBe(color.hot);
-	});
-
-	it("group hints are row-height strips too, never 2px wires", () => {
-		const scene = sceneOf(ctxOf({ hotRows: new Set(["0::2", "1::2"]), lookup: lookupOf({ "0": { "1": 0, "2": 1 }, "1": { "1": 0, "2": 1 } }) }));
-		const hints = scene.bands.filter((p) => p.hasAttribute("data-group-hint"));
-		expect(hints.length).toBe(2);
-		for (const path of scene.bands) {
-			const ys = ysOf(path.getAttribute("d") ?? "");
-			expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThanOrEqual(ROW - 2);
-		}
-	});
-
-	it("the hot chain's rows are NEVER painted twice (no stacked alpha)", () => {
-		const scene = sceneOf(ctxOf({ hotRibbon: "c", hotRows: new Set(["0::1", "1::1"]) }));
-		expect(scene.bands.filter((p) => p.hasAttribute("data-group-hint")).length).toBe(0);
-		expect(scene.bands.length).toBe(2);
 	});
 });

@@ -60,15 +60,23 @@ describe("measureRibbon", () => {
 			return null;
 		};
 		const shape = measureRibbon({ ribbon: ribbon([{ column: "0", rows: ["1", "fold"] }, { column: "1", rows: ["1"] }]), columns: columns, lookup, rowHeight: ROW });
-		// The band must stay at the real row (top ~0), not stretch to 500.
+		// The ribbon's row coverage stays at the real row (top ~0), not 500.
 		expect(shape).not.toBeNull();
-		const maxBottom = Math.max(...(shape?.bands ?? []).map((b) => b.bottom));
-		expect(maxBottom).toBeLessThan(ROW + 2);
+		const ys = (shape?.connectors[0]?.path ?? "").split(/[MCZL]\s*/).flatMap((piece) => {
+			const parts = piece.trim().split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n));
+			return parts.length >= 2 ? [parts[1] ?? 0] : [];
+		});
+		expect(Math.min(...ys)).toBeLessThan(ROW + 2);
 	});
 
-	it("merges adjacent rows into one band", () => {
+	it("merges adjacent rows into ONE ribbon path spanning them", () => {
 		const lookup = lookupOf({ "0": { "1": 0, "2": 1, "3": 2 }, "1": { "1": 0, "2": 1, "3": 2 } });
 		const shape = measureRibbon({ ribbon: ribbon([{ column: "0", rows: ["1", "2", "3"] }, { column: "1", rows: ["1", "2", "3"] }]), columns: columns, lookup, rowHeight: ROW });
-		expect(shape?.bands.filter((b) => b.column === "0").length).toBe(1);
+		expect(shape?.connectors.length).toBe(1);
+		const ys = (shape?.connectors[0]?.path ?? "").split(/[MCZL]\s*/).flatMap((piece) => {
+			const parts = piece.trim().split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n));
+			return parts.length >= 2 ? [parts[parts.length - 1] ?? 0] : [];
+		});
+		expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThanOrEqual(3 * ROW - 4);
 	});
 });

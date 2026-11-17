@@ -22,7 +22,7 @@ export interface RibbonPaintArgs extends Omit<RibbonContext, "columnBoxes" | "lo
 }
 
 export const useRibbonPaint = ({ root, layer, columns, ribbons, tone, theme, rowHeight, bandGap, hotRibbon, hotRows, revision }: RibbonPaintArgs): (() => void) => {
-	const bandLayer = useRef<SVGGElement | null>(null);
+	const hintLayer = useRef<SVGGElement | null>(null);
 	const ribbonLayer = useRef<SVGGElement | null>(null);
 
 	const paint = useCallback((): void => {
@@ -31,8 +31,8 @@ export const useRibbonPaint = ({ root, layer, columns, ribbons, tone, theme, row
 		if (svg === null || element === null) return;
 		const layout = measureLayout(element, bandGap);
 		const ctx: RibbonContext = { ribbons, columns, columnBoxes: columns.map((c) => ({ id: c.id, box: layoutColumn(layout, c.id) })), lookup: layoutLookup(layout, readScrollTops(element)), rowHeight, tone, hotRibbon, hotRows };
-		const layers = commitScene({ svg, layers: { bands: bandLayer.current, ribbons: ribbonLayer.current }, scene: sceneOf(ctx), ctx, theme });
-		bandLayer.current = layers.bands;
+		const layers = commitScene({ svg, layers: { hints: hintLayer.current, ribbons: ribbonLayer.current }, scene: sceneOf(ctx), ctx, theme });
+		hintLayer.current = layers.hints;
 		ribbonLayer.current = layers.ribbons;
 	}, [root, layer, columns, ribbons, tone, theme, rowHeight, bandGap, hotRibbon, hotRows]);
 

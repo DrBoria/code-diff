@@ -103,7 +103,7 @@ export const adaptLegacyBoard = (board: LegacyBoard): AdaptedBoard => {
 	const ribbons: Ribbon[] = (board.connections ?? []).map((connection) => {
 		// Accept BOTH shapes: legacy `ends.items` and new `ends.rows` (resolveLanes
 		// already emits the new shape, so a domain that uses it passes through intact).
-		const ends: RibbonEnd[] = (connection.ends ?? []).map((end) => ({ column: end.column, rows: end.rows ?? end.items ?? [] }));
+		const ends: RibbonEnd[] = (connection.ends ?? []).map((end) => ({ column: end.column, rows: end.rows ?? end.items ?? [], ...(end.gap === undefined ? {} : { gap: end.gap }) }));
 		const source: readonly (RibbonTextAnchor & { twin?: { column: string; line: string; from: number; to: number } })[] = connection.anchors ?? connection.marks ?? [];
 		const anchors: RibbonTextAnchor[] = source.map((mark) => {
 			const dup = mark.duplicate ?? mark.twin;

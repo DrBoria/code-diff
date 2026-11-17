@@ -1,20 +1,18 @@
 import type { Ribbon, MeasuredRibbon } from "./ribbon-types.js";
 import { measureRibbon } from "./ribbon-measure.js";
 import { positionRibbons, type Positioned } from "./hooks/use-ribbon-position.js";
-import { bandPath, groupHintPath } from "./ribbon-svg.js";
+import { groupHintPath } from "./ribbon-svg.js";
 import type { RibbonContext } from "./ribbon-context.js";
 
 /**
- * The backdrop scene, assembled from pure pieces: measure every ribbon against
- * the live layout and allocate corridor slots. THE CONTRACT: a ribbon is one
- * continuous strip — its CHAIN rows carry row-height bands in the ribbon's own
- * shade (hot = one uniform hot shade for bands AND road); a hovered group
- * header adds row-height hint strips for its members. Rows outside any chain
- * are NEVER washed. No React — the paint hook only commits this.
+ * The backdrop scene: measure every ribbon against the live layout and
+ * allocate corridor slots. A ribbon is ONE entity — its single path covers
+ * its rows and the corridor; there are no separate band elements. A hovered
+ * group header adds corridor hint lanes. No React — the paint hook commits.
  */
 export interface Scene {
 	readonly measured: readonly Positioned[];
-	readonly bands: SVGElement[];
+	readonly hints: SVGElement[];
 }
 
 /** The row keys a ribbon's ends name. */
@@ -36,20 +34,9 @@ const placeAll = (ctx: RibbonContext): Positioned[] => {
 	return positionRibbons(natural, ctx.columnBoxes, (ribbon, shift) => measureRibbon({ ribbon, columns: ctx.columnBoxes, lookup: ctx.lookup, rowHeight: ctx.rowHeight, shift }));
 };
 
-/** One ribbon's chain bands: every end row, in the ribbon's ONE shade (hot
- *  chains paint bands and road in the same hot colour). */
-const chainBands = (ctx: RibbonContext, entry: Positioned): SVGElement[] => {
-	const fill = ctx.hotRibbon === entry.ribbon.id ? ctx.tone.hotOf(entry.ribbon) : ctx.tone.fillOf(entry.ribbon);
-	return entry.shape.bands.flatMap((band) =>
-		band.rows
-			.map((id) => bandPath(ctx, band, fill, `${band.column}::${String(id)}`))
-			.filter((path): path is SVGElement => path !== null),
-	);
-};
-
-/** A hovered group header's member hints — row-height strips, never over the
- *  hot chain's own rows (those already carry the chain's bands). */
-const hintBands = (ctx: RibbonContext, hotKeys: ReadonlySet<string>): SVGElement[] =>
+/** A hovered group header's member hints — corridor lanes, never over the
+ *  hot chain's own rows (the hot ribbon already covers them). */
+const hintLanes = (ctx: RibbonContext, hotKeys: ReadonlySet<string>): SVGElement[] =>
 	[...ctx.hotRows]
 		.filter((key) => !hotKeys.has(key))
 		.map((key) => groupHintPath(ctx, key))
@@ -59,6 +46,5 @@ export const sceneOf = (ctx: RibbonContext): Scene => {
 	const measured = placeAll(ctx);
 	const hotChain = ctx.hotRibbon === null ? null : (measured.find((m) => m.ribbon.id === ctx.hotRibbon) ?? null);
 	const hotKeys = hotChain === null ? new Set<string>() : chainKeys(hotChain.ribbon);
-	const bands = [...measured.flatMap((entry) => chainBands(ctx, entry)), ...hintBands(ctx, hotKeys)];
-	return { measured, bands };
+	return { measured, hints: hintLanes(ctx, hotKeys) };
 };
