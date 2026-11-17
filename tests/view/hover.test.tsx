@@ -30,10 +30,9 @@ describe("hover lights ONE chain, not the column", () => {
 		expect(hotIds()).toEqual(["m3"]);
 	});
 
-	it("never washes rows OUTSIDE the chain: bands cover exactly the chain's rows", () => {
+	it("no separate band elements exist — the ribbon itself is the highlight", () => {
 		render(renderBoard({ columns: [codeColumn("0", ["a", "b", "c"]), codeColumn("1", ["a", "b", "c"])], ribbons, config: { foldUnconnected: false } }));
-		const keys = [...document.querySelectorAll("[data-band]")].map((p) => p.getAttribute("data-band"));
-		expect(keys.sort()).toEqual(["0::1", "0::2", "0::3", "1::1", "1::2", "1::3"]);
+		expect(document.querySelectorAll("[data-band]").length).toBe(0);
 		expect(document.querySelectorAll("[data-group-hint]").length).toBe(0);
 	});
 });

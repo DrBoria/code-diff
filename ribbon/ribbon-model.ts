@@ -5,7 +5,8 @@
  * locate a name in the rows, pair each range with its duplicate, resolve links
  * into ribbons, and group consecutive rows into one ribbon. No DOM, no colour.
  */
-import type { Ribbon, RibbonTextAnchor } from "./ribbon-types.js";
+import type { Ribbon, RibbonEnd, RibbonTextAnchor } from "./ribbon-types.js";
+import { oneSidedGap, placedIn } from "./ribbon-gap.js";
 import type { LineCell, LineRow } from "../rows/diff.js";
 
 /** One row/cell as mark resolution needs it: the comparison's own row shape,
@@ -26,8 +27,9 @@ export interface MemberLink {
 	readonly tone?: string;
 	readonly leftColumn: string;
 	readonly rightColumn: string;
-	readonly left: MemberLinkEnd;
-	readonly right: MemberLinkEnd;
+	/** Null when the member does not exist on that side (one-sided link). */
+	readonly left: MemberLinkEnd | null;
+	readonly right: MemberLinkEnd | null;
 }
 
 export const cellText = (cell: MarkCell | null | undefined): string => {
@@ -143,13 +145,13 @@ const columnIndex = (columns: readonly string[], id: string): number => {
  *  exists on ONE side only still gets a lane (one end, one mark): an added or
  *  removed member is part of the comparison, not invisible. */
 const laneMarks = (rows: readonly MarkRow[], columns: readonly string[], link: MemberLink): { left: Located | null; right: Located | null; marks: KeyedMark[] } | null => {
-	const left = locate({ rows, column: columnIndex(columns, link.leftColumn), name: link.left.name, line: link.left.line });
-	const right = locate({ rows, column: columnIndex(columns, link.rightColumn), name: link.right.name, line: link.right.line });
+	const left = link.left === null ? null : locate({ rows, column: columnIndex(columns, link.leftColumn), name: link.left.name, line: link.left.line });
+	const right = link.right === null ? null : locate({ rows, column: columnIndex(columns, link.rightColumn), name: link.right.name, line: link.right.line });
 	if (!left && !right) return null;
 	const mark = (column: string, end: MemberLinkEnd, at: Located): KeyedMark => ({ column, line: at.line, from: at.from, to: at.to, name: end.name, ...(end.key === undefined ? {} : { key: end.key }) });
 	const marks: KeyedMark[] = [];
-	if (left) marks.push(mark(link.leftColumn, link.left, left));
-	if (right) marks.push(mark(link.rightColumn, link.right, right));
+	if (left && link.left !== null) marks.push(mark(link.leftColumn, link.left, left));
+	if (right && link.right !== null) marks.push(mark(link.rightColumn, link.right, right));
 	return { left, right, marks };
 };
 
@@ -161,10 +163,15 @@ export const resolveLanes = (rows: readonly MarkRow[], columns: readonly string[
 		if (resolved !== null) lanes.push({ link, ...resolved });
 	}
 	pairTwins(lanes.flatMap((lane) => lane.marks));
+	// Where the two-sided members sit per column — a one-sided member's block
+	// on the opposite side is the run of rows its neighbours belong to.
+	const placedOf = (column: string): string[] => lanes.flatMap((l) => placedIn(l, column));
 	return lanes.map(({ link, left, right, marks }) => {
-		const ends: { column: string; rows: string[] }[] = [];
+		const ends: RibbonEnd[] = [];
 		if (left !== null) ends.push({ column: link.leftColumn, rows: [left.line] });
 		if (right !== null) ends.push({ column: link.rightColumn, rows: [right.line] });
+		const gapEnd = oneSidedGap({ rows, columns, link, left, right, placedOf });
+		if (gapEnd !== null) ends.push(gapEnd);
 		return {
 			id: link.connectionId,
 			...(link.label === undefined ? {} : { label: link.label }),

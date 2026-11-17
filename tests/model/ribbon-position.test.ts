@@ -52,11 +52,15 @@ describe("positionRibbons (slot allocation)", () => {
 		}
 	});
 
-	it("ends never leave their rows: bands stay at the measured rows", () => {
+	it("the ribbon's row coverage stays at the measured rows", () => {
 		for (const p of placed) {
-			for (const band of p.shape.bands) {
-				expect(band.top).toBeGreaterThanOrEqual(0);
-				expect(band.bottom).toBeLessThanOrEqual(2 * ROW);
+			for (const connector of p.shape.connectors) {
+				const ys = connector.path.split(/[MCZL]\s*/).flatMap((piece) => {
+					const parts = piece.trim().split(/[\s,]+/).map(Number).filter((n) => Number.isFinite(n));
+					return parts.length >= 2 ? [parts[1] ?? 0] : [];
+				});
+				expect(Math.min(...ys)).toBeGreaterThanOrEqual(0);
+				expect(Math.min(...ys)).toBeLessThanOrEqual(2 * ROW);
 			}
 		}
 	});

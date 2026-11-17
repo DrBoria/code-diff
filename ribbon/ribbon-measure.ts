@@ -2,7 +2,7 @@ import type { Box } from "../rows/row-types.js";
 import type { Ribbon, RibbonConnector, MeasuredRibbon } from "./ribbon-types.js";
 import type { AnchorLookup } from "../surface/surface-types.js";
 import { waistOf, waistPath, type WaistInput } from "./ribbon-waist.js";
-import { stubOf } from "./ribbon-stub.js";
+import { stubShape } from "./ribbon-stub.js";
 
 /**
  * ── RIBBON GEOMETRY ────────────────────────────────────────────────────────
@@ -62,14 +62,20 @@ const endBox = (boxes: readonly Box[]): Box => ({
 	right: Math.max(...boxes.map((b) => b.right)),
 });
 
-/** A closed filled band between two boxes: top edge curves across, bottom back. */
-const connectorPath = (a: Box, ax: number, b: Box, bx: number): string => {
+/** ONE closed strip covering both rows (outer edge → outer edge) and the
+ *  corridor between them — the N-end connector, same one-entity rule. */
+const connectorPath = (a: Box, b: Box, edges: { ax: number; bx: number; al: number; br: number }): string => {
+	const { ax, bx, al, br } = edges;
 	const mid = round((ax + bx) / 2);
 	return [
-		`M ${round(ax)} ${round(a.top)}`,
+		`M ${round(al)} ${round(a.top)}`,
+		`L ${round(ax)} ${round(a.top)}`,
 		`C ${mid} ${round(a.top)} ${mid} ${round(b.top)} ${round(bx)} ${round(b.top)}`,
+		`L ${round(br)} ${round(b.top)}`,
+		`L ${round(br)} ${round(b.bottom)}`,
 		`L ${round(bx)} ${round(b.bottom)}`,
 		`C ${mid} ${round(b.bottom)} ${mid} ${round(a.bottom)} ${round(ax)} ${round(a.bottom)}`,
+		`L ${round(al)} ${round(a.bottom)}`,
 		"Z",
 	].join(" ");
 };
@@ -94,16 +100,26 @@ const measureEnds = (ribbon: Ribbon, columns: readonly RibbonColumnBox[], lookup
 		.filter((e) => e.box !== null);
 };
 
+/** One end's x-edges: the corridor edge (towards the neighbour) and the outer
+ *  column edge the ribbon's row coverage reaches. */
+const endEdges = (end: MeasuredEnd, ctx: PairContext, side: "left" | "right"): { corridor: number; outer: number } => {
+	const col = ctx.columns.find((c) => c.id === end.column)?.box ?? null;
+	const own = end.box ?? { top: 0, bottom: 0, left: 0, right: 0 };
+	if (col === null) return side === "left" ? { corridor: own.right, outer: own.left } : { corridor: own.left, outer: own.right };
+
+	return side === "left" ? { corridor: col.right, outer: col.left } : { corridor: col.left, outer: col.right };
+};
+
 /** The waist inputs for a pair of ends (the corridor the label rides). */
 const waistInputOf = (left: MeasuredEnd, right: MeasuredEnd, ctx: PairContext, labelWidth: number): WaistInput | null => {
 	if (left.box === null || right.box === null) return null;
-	const boxOfColumn = (id: string): Box | null => ctx.columns.find((c) => c.id === id)?.box ?? null;
-	const ax = boxOfColumn(left.column)?.right ?? left.box.right;
-	const bx = boxOfColumn(right.column)?.left ?? right.box.left;
-	return { a: left.box, b: right.box, ax, bx, rowHeight: ctx.rowHeight, labelWidth, shift: ctx.shift };
+	const le = endEdges(left, ctx, "left");
+	const re = endEdges(right, ctx, "right");
+	return { a: left.box, b: right.box, ax: le.corridor, bx: re.corridor, al: le.outer, br: re.outer, rowHeight: ctx.rowHeight, labelWidth, shift: ctx.shift };
 };
 
-/** One connector between neighbouring ends: a waist for two ends, a band for N. */
+/** One connector between neighbouring ends: ONE unbroken strip covering both
+ *  rows and the corridor between them (waist for a pair, straight strip for N). */
 const connectorOf = (left: MeasuredEnd, right: MeasuredEnd, ctx: PairContext, label: { width: number; twoEnds: boolean }): RibbonConnector | null => {
 	const input = waistInputOf(left, right, ctx, label.width);
 	if (input === null || left.box === null || right.box === null) return null;
@@ -112,8 +128,10 @@ const connectorOf = (left: MeasuredEnd, right: MeasuredEnd, ctx: PairContext, la
 		return { from: left.column, to: right.column, path: waistPath(input, waist), height: round(waist.half * 2), cx: waist.midX, cy: waist.nodeY };
 	}
 	const { ax, bx } = input;
+	const al = input.al ?? ax;
+	const br = input.br ?? bx;
 	const height = Math.max(left.box.bottom - left.box.top, right.box.bottom - right.box.top, ctx.rowHeight);
-	return { from: left.column, to: right.column, path: connectorPath(left.box, ax, right.box, bx), height: round(height), cx: round((ax + bx) / 2), cy: round((Math.max(left.box.top, right.box.top) + Math.min(left.box.bottom, right.box.bottom)) / 2) };
+	return { from: left.column, to: right.column, path: connectorPath(left.box, right.box, { ax, bx, al, br }), height: round(height), cx: round((ax + bx) / 2), cy: round((Math.max(left.box.top, right.box.top) + Math.min(left.box.bottom, right.box.bottom)) / 2) };
 };
 
 /** The caption + corridor box of the first two ends (where the label lives). */
@@ -152,30 +170,18 @@ export interface MeasureArgs {
 	readonly shift?: number;
 }
 
-/** The measured bands of every end: the CHAIN's own rows, painted by the scene
- *  in the ribbon's one shade. Rows outside the chain never get a band. */
-const bandsOf = (ends: readonly MeasuredEnd[], ribbon: Ribbon): MeasuredRibbon["bands"] =>
-	ends.flatMap((end) => end.blocks.map((block) => ({ column: end.column, rows: block.rows, top: block.box.top, bottom: block.box.bottom, ...(ribbon.tone === undefined ? {} : { tone: ribbon.tone }) })));
-
-/** A lone end's shape: one stub into the corridor, no caption (an added or
- *  removed member is part of the comparison, not invisible). */
-const stubShape = (ribbon: Ribbon, first: MeasuredEnd, ctx: PairContext, bands: MeasuredRibbon["bands"]): MeasuredRibbon => {
-	const stub = stubOf(first, ctx.columns, ctx.rowHeight);
-	return { id: ribbon.id, tone: ribbon.tone ?? "duplicate", label: ribbon.label ?? null, bands, connectors: stub === null ? [] : [stub], caption: null, box: null };
-};
-
 /**
  * Measure one ribbon. Returns null when NO end is on screen. Two or more ends
- * draw connectors between them; a single end draws a stub into the corridor.
+ * draw ONE unbroken strip across them; a single end draws one strip over its
+ * row continuing as an inter-line micro-line to the opposite block.
  */
 export const measureRibbon = ({ ribbon, columns, lookup, rowHeight, shift = 0 }: MeasureArgs): MeasuredRibbon | null => {
 	const ends = measureEnds(ribbon, columns, lookup);
 	const first = ends[0];
 	if (first === undefined) return null;
-	const bands = bandsOf(ends, ribbon);
 	const ctx: PairContext = { columns, rowHeight, shift };
-	if (ends.length === 1) return stubShape(ribbon, first, ctx, bands);
+	if (ends.length === 1) return stubShape({ ribbon, first, columns: ctx.columns, rowHeight: ctx.rowHeight, lookup });
 	const labelWidth = (ribbon.label?.length ?? 0) * 6;
 	const { caption, box } = captionOf(ends, ctx, labelWidth);
-	return { id: ribbon.id, tone: ribbon.tone ?? "duplicate", label: ribbon.label ?? null, bands, connectors: connectorsOf(ends, ctx, labelWidth), caption, box };
+	return { id: ribbon.id, tone: ribbon.tone ?? "duplicate", label: ribbon.label ?? null, connectors: connectorsOf(ends, ctx, labelWidth), caption, box };
 };
