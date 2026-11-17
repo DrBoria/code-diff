@@ -6,9 +6,10 @@ import type { RibbonContext } from "./ribbon-context.js";
 import type { Scene } from "./ribbon-scene.js";
 
 /**
- * The SVG writers of the backdrop: one path per row wash, one group per ribbon
+ * The SVG writers of the backdrop: one band per CHAIN row, one group per ribbon
  * (connectors + caption). Pure DOM writes — no measuring, no state. A focused
- * chain is painted in ONE uniform hot shade everywhere, never stacked.
+ * chain is painted in ONE uniform hot shade everywhere — bands AND road —
+ * never stacked. Rows outside any chain are NEVER washed.
  */
 
 const NS = "http://www.w3.org/2000/svg";
@@ -22,9 +23,10 @@ const pathOf = (d: string, fill: string): SVGPathElement => {
 };
 
 /**
- * One group-hint RIBBON: a hovered group HEADER lights its members with thin
- * lanes in the corridor — never a wash over the code. Members on two columns
- * are joined; a one-column group gets a stub at the corridor edge.
+ * One group-hint RIBBON: a hovered group HEADER lights its members with
+ * row-height lanes — the SAME strip shape as a ribbon, never a 2px wire and
+ * never a wash over rows outside the group. Members on two columns are joined;
+ * a one-column group gets a stub at the corridor edge.
  */
 /** The corridor-side edges of a hint lane: from this column towards its
  *  nearest neighbour (a 14px stub when the group lives in one column). */
@@ -49,11 +51,22 @@ export const groupHintPath = (ctx: RibbonContext, key: string): SVGElement | nul
 	if (box === null || colBox == null) return null;
 	const row = ctx.columns.find((c) => c.id === column)?.rows?.find((r) => String(r.id) === id);
 	const color = ctx.tone.colorOfKey(row?.tone ?? "duplicate");
-	const y = (box.top + box.bottom) / 2;
 	const { x1, x2 } = hintEdges(ctx, column, colBox);
 	const mx = (x1 + x2) / 2;
-	const path = pathOf(`M ${x1} ${y - 1} C ${mx} ${y - 1}, ${mx} ${y - 1}, ${x2} ${y - 1} L ${x2} ${y + 1} C ${mx} ${y + 1}, ${mx} ${y + 1}, ${x1} ${y + 1} Z`, color.fill);
+	const { top, bottom } = box;
+	const path = pathOf(`M ${x1} ${top} C ${mx} ${top}, ${mx} ${top}, ${x2} ${top} L ${x2} ${bottom} C ${mx} ${bottom}, ${mx} ${bottom}, ${x1} ${bottom} Z`, color.fill);
 	path.setAttribute("data-group-hint", key);
+	return path;
+};
+
+/** One CHAIN row's band: a full-height strip over the row, in the chain's one
+ *  shade (hot when its chain is focused). Never painted for rows outside it. */
+export const bandPath = (ctx: RibbonContext, band: { column: string; top: number; bottom: number }, fill: string, key: string): SVGElement | null => {
+	const colBox = ctx.columnBoxes.find((c) => c.id === band.column)?.box;
+	if (colBox == null) return null;
+	const { left, right } = colBox;
+	const path = pathOf(`M ${left} ${band.top} L ${right} ${band.top} L ${right} ${band.bottom} L ${left} ${band.bottom} Z`, fill);
+	path.setAttribute("data-band", key);
 	return path;
 };
 

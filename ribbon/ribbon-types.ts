@@ -58,7 +58,7 @@ export interface RibbonConnector {
 export interface MeasuredRibbon extends Pick<Ribbon, "id"> {
 	readonly tone: string;
 	readonly label: string | null;
-	readonly bands: readonly { column: string; top: number; bottom: number; tone?: string }[];
+	readonly bands: readonly { column: string; rows: readonly RowId[]; top: number; bottom: number; tone?: string }[];
 	readonly connectors: readonly RibbonConnector[];
 	readonly caption: { x: number; y: number } | null;
 	readonly box: Box | null;

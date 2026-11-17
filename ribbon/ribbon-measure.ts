@@ -2,6 +2,7 @@ import type { Box } from "../rows/row-types.js";
 import type { Ribbon, RibbonConnector, MeasuredRibbon } from "./ribbon-types.js";
 import type { AnchorLookup } from "../surface/surface-types.js";
 import { waistOf, waistPath, type WaistInput } from "./ribbon-waist.js";
+import { stubOf } from "./ribbon-stub.js";
 
 /**
  * ── RIBBON GEOMETRY ────────────────────────────────────────────────────────
@@ -24,10 +25,16 @@ export interface RibbonColumnBox {
 	readonly box: Box | null;
 }
 
+/** A measured block: its extent plus the row ids it covers. */
+interface MeasuredBlock {
+	readonly box: Box;
+	readonly rows: readonly (string | number)[];
+}
+
 /** A measured end: its real row boxes, gathered into contiguous blocks. */
 interface MeasuredEnd {
 	readonly column: string;
-	readonly blocks: readonly Box[];
+	readonly blocks: readonly MeasuredBlock[];
 	readonly box: Box | null;
 }
 
@@ -35,14 +42,15 @@ interface MeasuredEnd {
 type PairContext = Pick<MeasureArgs, "columns" | "rowHeight"> & { readonly shift: number };
 
 /** Gather measured ids into contiguous blocks by visual adjacency. */
-const blocksOf = (boxes: readonly Box[]): Box[] => {
-	const sorted = [...boxes].sort((a, b) => a.top - b.top);
-	const out: Box[] = [];
-	for (const box of sorted) {
+const blocksOf = (boxes: readonly { id: string | number; box: Box }[]): MeasuredBlock[] => {
+	const sorted = [...boxes].sort((a, b) => a.box.top - b.box.top);
+	const out: MeasuredBlock[] = [];
+	for (const { id, box } of sorted) {
 		const last = out[out.length - 1];
-		if (last !== undefined && box.top <= last.bottom + ADJACENT) {
-			out[out.length - 1] = { top: Math.min(last.top, box.top), bottom: Math.max(last.bottom, box.bottom), left: Math.min(last.left, box.left), right: Math.max(last.right, box.right) };
-		} else out.push({ ...box });
+		if (last !== undefined && box.top <= last.box.bottom + ADJACENT) {
+			const merged: Box = { top: Math.min(last.box.top, box.top), bottom: Math.max(last.box.bottom, box.bottom), left: Math.min(last.box.left, box.left), right: Math.max(last.box.right, box.right) };
+			out[out.length - 1] = { box: merged, rows: [...last.rows, id] };
+		} else out.push({ box: { ...box }, rows: [id] });
 	}
 	return out;
 };
@@ -67,10 +75,10 @@ const connectorPath = (a: Box, ax: number, b: Box, bx: number): string => {
 };
 
 /** Only REAL row boxes anchor a ribbon: a fold's zero-height point is not a row. */
-const realBoxes = (end: { column: string; rows?: readonly (string | number)[] }, lookup: AnchorLookup): Box[] =>
+const realBoxes = (end: { column: string; rows?: readonly (string | number)[] }, lookup: AnchorLookup): { id: string | number; box: Box }[] =>
 	(end.rows ?? [])
-		.map((id) => lookup(end.column, String(id)))
-		.filter((b): b is Box => b !== null && b.bottom - b.top > 0.5);
+		.map((id) => ({ id, box: lookup(end.column, String(id)) }))
+		.filter((e): e is { id: string | number; box: Box } => e.box !== null && e.box.bottom - e.box.top > 0.5);
 
 /** The ribbon's ends in column order, each with its measured blocks. */
 const measureEnds = (ribbon: Ribbon, columns: readonly RibbonColumnBox[], lookup: AnchorLookup): MeasuredEnd[] => {
@@ -81,7 +89,7 @@ const measureEnds = (ribbon: Ribbon, columns: readonly RibbonColumnBox[], lookup
 		.sort((a, b) => a.order - b.order)
 		.map(({ end }) => {
 			const boxes = realBoxes(end, lookup);
-			return { column: end.column, blocks: blocksOf(boxes), box: boxes.length > 0 ? endBox(boxes) : null };
+			return { column: end.column, blocks: blocksOf(boxes), box: boxes.length > 0 ? endBox(boxes.map((b) => b.box)) : null };
 		})
 		.filter((e) => e.box !== null);
 };
@@ -135,28 +143,6 @@ const connectorsOf = (ends: readonly MeasuredEnd[], ctx: PairContext, labelWidth
 	return out;
 };
 
-/** A one-ended ribbon (an added/removed member) gets a STUB: a short tongue
- *  from its row's corridor edge into the corridor, so absence is visible too. */
-/** Which way the corridor lies from a lone end: towards the nearest other
- *  column, or away from the board edge when there is none. */
-const stubSide = (colBox: Box, columns: readonly RibbonColumnBox[], own: string): boolean => {
-	const centre = (colBox.left + colBox.right) / 2;
-	const others = columns.filter((c): c is { id: string; box: Box } => c.id !== own && c.box !== null);
-	if (others.length === 0) return colBox.left <= centre;
-	const nearest = others.reduce((best, c) => (Math.abs(c.box.left - centre) < Math.abs(best.box.left - centre) ? c : best));
-	return nearest.box.left > colBox.right;
-};
-
-const stubOf = (end: MeasuredEnd, columns: readonly RibbonColumnBox[], rowHeight: number): RibbonConnector | null => {
-	const colBox = columns.find((c) => c.id === end.column)?.box;
-	if (end.box === null || colBox == null) return null;
-	const toRight = stubSide(colBox, columns, end.column);
-	const ax = toRight ? colBox.right : colBox.left;
-	const bx = ax + (toRight ? 14 : -14);
-	const stubBox: Box = { top: end.box.top, bottom: Math.min(end.box.bottom, end.box.top + rowHeight), left: Math.min(ax, bx), right: Math.max(ax, bx) };
-	return { from: end.column, to: end.column, path: connectorPath(stubBox, ax, stubBox, bx), height: round(stubBox.bottom - stubBox.top), cx: round((ax + bx) / 2), cy: round((stubBox.top + stubBox.bottom) / 2) };
-};
-
 export interface MeasureArgs {
 	readonly ribbon: Ribbon;
 	readonly columns: readonly RibbonColumnBox[];
@@ -166,10 +152,10 @@ export interface MeasureArgs {
 	readonly shift?: number;
 }
 
-/** The measured row washes of every end (kept for geometry; the backdrop no
- *  longer paints them — ribbons and word marks carry the comparison). */
+/** The measured bands of every end: the CHAIN's own rows, painted by the scene
+ *  in the ribbon's one shade. Rows outside the chain never get a band. */
 const bandsOf = (ends: readonly MeasuredEnd[], ribbon: Ribbon): MeasuredRibbon["bands"] =>
-	ends.flatMap((end) => end.blocks.map((block) => ({ column: end.column, top: block.top, bottom: block.bottom, ...(ribbon.tone === undefined ? {} : { tone: ribbon.tone }) })));
+	ends.flatMap((end) => end.blocks.map((block) => ({ column: end.column, rows: block.rows, top: block.box.top, bottom: block.box.bottom, ...(ribbon.tone === undefined ? {} : { tone: ribbon.tone }) })));
 
 /** A lone end's shape: one stub into the corridor, no caption (an added or
  *  removed member is part of the comparison, not invisible). */
