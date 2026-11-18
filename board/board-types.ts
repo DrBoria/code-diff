@@ -42,6 +42,9 @@ export interface BoardConfig {
 	readonly foldUnconnected?: boolean;
 	readonly foldLabel?: (count: number) => string;
 	readonly ribbonHeight?: number;
+	/** Draw a selection checkbox on every row (the merge "stage" workflow).
+	 *  Default false — comparison boards select nothing. */
+	readonly selectable?: boolean;
 }
 
 /** A custom row renderer plugin. */

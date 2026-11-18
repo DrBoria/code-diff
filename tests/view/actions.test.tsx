@@ -66,3 +66,40 @@ describe("ribbon connector actions", () => {
 		expect(document.querySelector('[data-action="apply-left"]')).toBeTruthy();
 	});
 });
+
+describe("selection checkbox (config.selectable)", () => {
+	it("is absent by default — comparison boards select nothing", () => {
+		render(renderBoard({ columns: [codeColumn("left", ["a"], { fold: false })] }));
+		expect(document.querySelector('[data-action="select"]')).toBeNull();
+	});
+
+	it("draws one checkbox per row when selectable, toggling selection without a row click", () => {
+		const onSelect = vi.fn();
+		const onClick = vi.fn();
+		render(renderBoard({
+			columns: [codeColumn("left", ["a", "b"], { fold: false })],
+			config: { selectable: true },
+			events: { "row:select": onSelect, "row:click": onClick },
+		}));
+		const boxes = document.querySelectorAll('[data-action="select"]');
+		expect(boxes.length).toBe(2);
+		fireEvent.click(boxes[0] as Element);
+		expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ row: { column: "left", row: "1" }, selected: true }), expect.anything());
+		// The checkbox is an action, never a row click (no focus toggle either).
+		expect(onClick).not.toHaveBeenCalled();
+		// Clicking again deselects.
+		fireEvent.click(boxes[0] as Element);
+		expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ row: { column: "left", row: "1" }, selected: false }), expect.anything());
+	});
+
+	it("shows the controlled selection as checked", () => {
+		render(renderBoard({
+			columns: [codeColumn("left", ["a", "b"], { fold: false })],
+			config: { selectable: true },
+			state: { selected: [{ column: "left", row: "2" }] },
+		}));
+		const boxes = [...document.querySelectorAll('[data-action="select"]')];
+		expect((boxes[0] as HTMLElement).textContent).toBe("");
+		expect((boxes[1] as HTMLElement).textContent).toBe("✓");
+	});
+});

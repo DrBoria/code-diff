@@ -37,6 +37,10 @@ const hotFocus = (ribbons: readonly Ribbon[], hot: string | null, column: string
 	return out;
 };
 
+// A rubber column ellipsizes long text (a syntax name wider than its strip);
+// the full text stays one hover away instead of spilling into the corridor.
+const rubberTitle = (rubber: boolean, plain: string): string | undefined => (rubber && plain.length > 0 ? plain : undefined);
+
 export const ColumnRow = ({ column, row, index, rubber, focus, hotRibbon, selected }: ColumnRowProps): ReactElement => {
 	const { config, theme, state, emit, props } = useBoard();
 	const ref: RowRef = { column: column.id, row: row.id };
@@ -44,12 +48,12 @@ export const ColumnRow = ({ column, row, index, rubber, focus, hotRibbon, select
 	const view = rowViewOf({ row, column, focus: lit, theme, tokenize: props.tokenize });
 	const params = { row: ref, selected: state.state.selected };
 	const custom = props.renderRow?.({ row, column, index, mirrored: column.mirrored === true });
-	// A rubber column ellipsizes long text (a syntax name wider than its strip);
-	// the full text stays one hover away instead of spilling into the corridor.
-	const plain = row.text ?? view.spans.map((span) => span.text).join("");
+	// The merge "stage" cue: only a selectable board hands the row its toggle.
+	const selectProps = config.selectable ? { onToggleSelect: () => state.toggleSelect(ref) } : {};
+	const title = rubberTitle(rubber, row.text ?? view.spans.map((span) => span.text).join(""));
 
 	return (
-		<div key={String(row.id)} data-row-host title={rubber && plain.length > 0 ? plain : undefined} onPointerEnter={() => emit("row:mouseEnter", { row: ref })} onPointerLeave={() => emit("row:mouseLeave", { row: null })}>
+		<div key={String(row.id)} data-row-host title={title} onPointerEnter={() => emit("row:mouseEnter", { row: ref })} onPointerLeave={() => emit("row:mouseLeave", { row: null })}>
 			<Row
 				row={row}
 				spans={view.spans}
@@ -59,6 +63,7 @@ export const ColumnRow = ({ column, row, index, rubber, focus, hotRibbon, select
 				rubber={rubber}
 				rowHeight={config.rowHeight}
 				selected={selected}
+				{...selectProps}
 				aboveActions={<Actions actions={props.actions ?? []} entity="row" placement="above" params={params} emit={emit} />}
 				insideActions={<Actions actions={props.actions ?? []} entity="row" placement={["inside-start", "inside-end"]} params={params} emit={emit} />}
 				{...(custom === undefined ? {} : { renderCustom: custom })}

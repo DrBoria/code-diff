@@ -86,6 +86,25 @@ const Explanation = styled.div<{ $ink?: string }>`
 	word-break: break-word;
 `;
 
+/* The selection checkbox: a small square on the left of the plate (the merge
+   "stage" cue). Clicking it toggles the row in the controller's selection; it
+   carries data-action so the board never also reads it as a row click. */
+const SelectBox = styled.button<{ $on?: boolean }>`
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 13px;
+	height: 13px;
+	padding: 0;
+	border: 1px solid ${(p) => (p.$on === true ? p.theme.text : p.theme.edge)};
+	border-radius: 3px;
+	background: ${(p) => (p.$on === true ? p.theme.text : "transparent")};
+	color: ${(p) => p.theme.paper};
+	font: 9px/1 ${(p) => p.theme.mono};
+	cursor: pointer;
+	z-index: 3;
+`;
+
 const Above = styled.div<{ $mirrored: boolean }>`
 	position: absolute;
 	top: 0;
@@ -119,6 +138,8 @@ export interface RowProps {
 	readonly rubber: boolean;
 	readonly rowHeight: number;
 	readonly selected?: boolean;
+	/** When set, a selection checkbox is drawn and calls this on click. */
+	readonly onToggleSelect?: () => void;
 	readonly aboveActions?: ReactNode;
 	readonly insideActions?: ReactNode;
 	readonly renderCustom?: ReactNode;
@@ -139,8 +160,22 @@ const RowLine = ({ row, spans, paint, mirrored, rubber, rowHeight }: RowProps): 
 	</Line>
 );
 
-export const Row = ({ row, spans, paint, explanationInk, mirrored, rubber, rowHeight, selected, aboveActions, insideActions, renderCustom }: RowProps): ReactElement => (
+export const Row = ({ row, spans, paint, explanationInk, mirrored, rubber, rowHeight, selected, onToggleSelect, aboveActions, insideActions, renderCustom }: RowProps): ReactElement => (
 	<Entry data-item={String(row.id)} data-actions-host $selected={selected}>
+		{onToggleSelect === undefined ? null : (
+			<SelectBox
+				type="button"
+				$on={selected === true}
+				data-action="select"
+				title={selected === true ? "deselect row" : "select row"}
+				onClick={(event) => {
+					event.stopPropagation();
+					onToggleSelect();
+				}}
+			>
+				{selected === true ? "✓" : ""}
+			</SelectBox>
+		)}
 		{aboveActions !== undefined ? <Above $mirrored={mirrored}>{aboveActions}</Above> : null}
 		{renderCustom ?? <RowLine row={row} spans={spans} paint={paint} mirrored={mirrored} rubber={rubber} rowHeight={rowHeight} />}
 		{row.explanation === undefined ? null : <Explanation {...(explanationInk === undefined ? {} : { $ink: explanationInk })}>{row.explanation.text}</Explanation>}

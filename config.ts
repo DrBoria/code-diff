@@ -18,6 +18,7 @@ export const DEFAULT_CONFIG: ResolvedConfig = {
 	maxHeight: "70vh",
 	foldUnconnected: true,
 	ribbonHeight: 1,
+	selectable: false,
 	foldLabel: (count) => `⋯ ${count} line${count === 1 ? "" : "s"} hidden — click to show`,
 };
 

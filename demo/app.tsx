@@ -74,7 +74,7 @@ const App = () => {
 		{ id: "apply-both", label: "Apply both", icon: <span>⇄</span>, entity: "ribbon", placement: "connector", onClick: (p) => p.ribbon && apply(p.ribbon.id, "both") },
 		{ id: "stage", label: "Stage selection", icon: <span>✓</span>, entity: "row", placement: "toolbar", disabled: (p) => p.selected.length === 0, onClick: (p) => note(`staged ${p.selected.length}: ${p.selected.map((r) => `${r.column}#${r.row}`).join(", ")}`) },
 		{ id: "undo", label: "Undo", icon: <span>↩</span>, entity: "row", placement: "toolbar", disabled: () => history.length === 0, onClick: undo },
-		{ id: "stage-row", label: "stage", icon: <span>✓</span>, entity: "row", placement: "above", variant: "text", onClick: (p) => p.row && setSelected((s) => [...s, p.row as RowRef]) },
+		{ id: "stage-row", label: "stage", icon: <span>✓</span>, entity: "row", placement: "above", variant: "text", onClick: (p) => p.row && setSelected((s) => (s.some((r) => r.column === p.row!.column && r.row === p.row!.row) ? s : [...s, p.row as RowRef])) },
 	];
 
 	const events: Events = {
@@ -115,7 +115,7 @@ const App = () => {
 					ribbons={f.ribbons}
 					corridors={f.corridors}
 					sync={[{ columns: f.columns.map((c) => c.id), axis: "xy" }]}
-					config={{ foldUnconnected: f.fold, diffContext: 3, boardHeight: "70vh" }}
+					config={{ foldUnconnected: f.fold, diffContext: 3, boardHeight: "70vh", selectable: active === "merge" || active === "git" }}
 					actions={active === "merge" ? actions : actions.filter((a) => a.placement === "toolbar" || a.placement === "above")}
 					events={events}
 					state={{ revealed, selected }}
